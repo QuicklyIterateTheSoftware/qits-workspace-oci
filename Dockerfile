@@ -31,6 +31,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 # `distributionType=only-script` the mvnw script silently falls back from the `.zip` distribution to
 # `.tar.gz` when unzip is absent, which then fails `distributionSha256Sum` validation (the pinned sum
 # is the zip's) — see the retired monolith's docs/issues/2026-07-05_workspace-image-cannot-build-fixture.md.
+# `skopeo` is a real OCI client, needed by qits-artifacts' `qits` (OCI) userflow stories: they drive a
+# `skopeo copy` push and pull against the registry the suite launches, and skip themselves when the
+# binary is absent — so a workspace agent running that suite locally would see three stories quietly
+# self-disable rather than fail.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         git \
@@ -49,6 +53,7 @@ RUN apt-get update \
         tmux \
         ripgrep \
         fd-find \
+        skopeo \
     && rm -rf /var/lib/apt/lists/*
 
 # Git invokes a credential helper for every HTTP remote it needs credentials for.  This one mints a
