@@ -14,9 +14,10 @@
 # the tag name IS that version.
 event: SCMPublishTag
 when:
-  # repoId, not repository: the tag event carries the git host's own coordinate, which is the name
-  # this repository is served under.
-  - repoId: { exact: qits-oci-workspace }
+  # repoName, not repoId: since the identity cutover the git host's own coordinate is an opaque
+  # UUID, so a name match on repoId never fires. The tag event echoes the public name the push
+  # was addressed with; a rename updates this line in the same campaign.
+  - repoName: { exact: qits-workspace-oci }
 
 # A DECLARATION, NOT A REPORT. qits-ci cannot see what the step pushed; it announces on the strength
 # of this line. Keep it true.
