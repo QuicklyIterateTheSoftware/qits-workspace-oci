@@ -1,4 +1,4 @@
-# qits-oci-workspace
+# qits-workspace-oci
 
 The workspace toolchain base image, published as **`qits/workspace-base`**.
 
