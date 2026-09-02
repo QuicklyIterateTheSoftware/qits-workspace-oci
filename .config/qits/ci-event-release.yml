@@ -71,3 +71,115 @@ steps:
       # cache either way — while under the containerd image store it drops the last reference to
       # content a concurrent build of this same Dockerfile may still be resolving, which is the
       # race that broke the release of 2026-08-11.
+
+      # --- the SBOM -------------------------------------------------------------------------------
+      # THE SBOM FOR AN IMAGE LIKE THIS ONE IS ITS `FROM` LINE, and there is nothing else it
+      # honestly could be: this Dockerfile assembles its toolchain with `apt` and a handful of
+      # tarballs, and declares no manifest a scanner could read. What a consumer of it needs to
+      # know is which upstream it inherits and at which tag, and that is exactly one `FROM` per
+      # stage. The same shape qits-build-images-oci publishes for the five step images, with its
+      # loop collapsed — there is one image here.
+      #
+      # AFTER THE PUSH AND BEFORE GREEN, which is the ordering rule rather than a preference:
+      # qits-ci announces `SoftwareRelease` only for a green run, so a document stored here can
+      # never be missing for a version somebody was told about. A failed PUT fails the release on
+      # purpose.
+      #
+      # A multi-stage file names its OWN earlier stages in later `FROM`s, and a stage alias is not
+      # an upstream image. This file has one stage today and the skip below therefore removes
+      # nothing; it is here so the document stays right the day it grows a builder stage.
+      stages=$(sed -n \
+        's/^[[:space:]]*[Ff][Rr][Oo][Mm][[:space:]].*[[:space:]][Aa][Ss][[:space:]]\{1,\}\([^[:space:]]\{1,\}\).*$/\1/p' \
+        Dockerfile)
+      # Every `FROM`'s image ref: drop the keyword, drop any `--platform=`-style flag, keep the
+      # first word — which leaves the ref alone and discards a trailing `AS <stage>`.
+      bases=$(sed -n 's/^[[:space:]]*[Ff][Rr][Oo][Mm][[:space:]]\{1,\}//p' Dockerfile \
+        | sed 's/--[^[:space:]]*[[:space:]]\{1,\}//g' \
+        | sed 's/[[:space:]].*$//')
+
+      components=''
+      depends=''
+      seen=''
+      sep=''
+      for base in $bases; do
+        for stage in $stages; do
+          if [ "$base" = "$stage" ]; then base=''; break; fi
+        done
+        [ -n "$base" ] || continue
+        # The ref reaches a JSON document and a purl, so its shape is checked the same way the
+        # version was: a reference is the registry's own charset and nothing else. Nothing but this
+        # Dockerfile feeds this, and that is precisely why the guard is cheap to keep.
+        case "$base" in
+          ''|*[!a-zA-Z0-9._:/@-]*)
+            echo "Dockerfile: unusable FROM '$base'" >&2; exit 1 ;;
+        esac
+        # DISTINCT BASES ONLY — two stages built from one upstream are one dependency.
+        case " $seen " in
+          *" $base "*) continue ;;
+        esac
+        seen="$seen $base"
+
+        case "$base" in
+          # A digest ref pins harder than a tag, so the digest IS the version.
+          *@*)
+            name=${base%@*}
+            tag=${base##*@}
+            ;;
+          *)
+            # An untagged `FROM` means `latest` by definition. The colon is not proof of a tag: a
+            # registry host may carry a port, and in `host:5000/image` the colon is the port's.
+            tag=${base##*:}
+            case "$base" in
+              *:*) : ;;
+              *) tag='' ;;
+            esac
+            case "$tag" in
+              */*) tag='' ;;
+            esac
+            if [ -n "$tag" ]; then
+              name=${base%:*}
+            else
+              name=$base
+              tag=latest
+            fi
+            ;;
+        esac
+
+        purl="pkg:docker/$name@$tag"
+        components="$components$sep$(printf \
+          '{"type":"container","bom-ref":"%s","name":"%s","version":"%s","purl":"%s"}' \
+          "$purl" "$name" "$tag" "$purl")"
+        depends="$depends$sep$(printf '"%s"' "$purl")"
+        sep=','
+      done
+      if [ -z "$components" ]; then
+        echo "Dockerfile declares no base image" >&2; exit 1
+      fi
+
+      # CycloneDX 1.6: the image this run pushed as the metadata component, one container component
+      # per distinct base, and a single dependency edge from the root to all of them. Three appends
+      # rather than one unreadable format string; every value goes through `%s`, so nothing in a ref
+      # can be read as a printf directive.
+      #
+      # THE ROOT IS THE DECLARED NAME, unqualified — `artifacts:` above says
+      # `{type: docker, name: qits/workspace-base}`, and that is the coordinate a SoftwareRelease
+      # consumer asks for. The components keep the refs the build actually resolved, registry host
+      # and all, because that is what this image is really made of.
+      root="pkg:docker/qits/workspace-base@$version"
+      printf '{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,' > sbom.json
+      printf '"metadata":{"component":{"type":"container","bom-ref":"%s",' "$root" >> sbom.json
+      printf '"name":"qits/workspace-base","version":"%s","purl":"%s"}},' \
+        "$version" "$root" >> sbom.json
+      printf '"components":[%s],"dependencies":[{"ref":"%s","dependsOn":[%s]}]}\n' \
+        "$components" "$root" "$depends" >> sbom.json
+
+      # The store is a sibling path of the npm registry inside the qits-artifacts deployment, so its
+      # root is DERIVED from $QITS_NPM_REGISTRY_URL — the qits-net alias every step carries, and the
+      # one this container can actually dial. NOT $QITS_REGISTRY: that is the host-published name
+      # the docker daemon pushes through, and the edge in front of it 401s every sessionless write
+      # since the commissioned-credentials cutover (measured twice on 2026.902.53027). ci-base
+      # carries the curl, so no helper container is needed for the PUT.
+      sbom_base="${QITS_NPM_REGISTRY_URL%%/artifacts/*}/artifacts/sboms"
+      curl -fsS -X PUT -H 'Content-Type: application/vnd.cyclonedx+json' \
+        --data-binary @sbom.json \
+        "$sbom_base/docker/qits/workspace-base/-/$version"
