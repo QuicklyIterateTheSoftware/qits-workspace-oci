@@ -1,0 +1,79 @@
+# THE ONE QA PIPELINE THIS REPOSITORY HAS, and it runs for a release request and nothing else.
+#
+# There is no push pipeline any more, and `ci-post-receive.yml` is what this file replaces.
+# qits-projects keeps a backing branch `release/<id>` per open release request — an octopus merge of
+# that request's sources, refolded whenever the set changes — and publishes `ReleaseRequestChanged`
+# on every successful re-fold. The merge primitive that writes that branch fires no `post-receive`
+# and so publishes no `SCMPublishCommit`: without this file the fold exists and NOTHING BUILDS IT.
+# A fold the git host answered `unchanged`, and one that conflicted, publish nothing — so every
+# arrival here is a new sha worth a build.
+#
+# DECIDED AT MAIN, BUILT AT THE FOLD. This file is discovered, parsed and selected at `main`'s head,
+# always; only the run's branch and sha come from the payload, which is why `checkout:` names them
+# as a pair — a sha with no branch whose history holds it is not something a step container can
+# fetch. A release request therefore cannot alter the CI that gates it by folding in a commit that
+# edits this file. Inside a step, $QITS_CI_BRANCH is `release/<id>` and $QITS_CI_SHA is the merged
+# sha; the fold is already checked out, so nothing below fetches or switches refs.
+#
+# EVERY STEP HERE IS GATING, INCLUDING THE ONE THAT PUSHES AN IMAGE. It stays in the gating half on
+# purpose: whatever a run publishes is published before anything later can fail. The coordinate it
+# pushes is the MERGED SHA, which no `ReleaseRequestChanged` is ever derived from, so this pipeline
+# cannot re-trigger itself; and a redelivered event re-pushes identical content under the same tag,
+# which is why nothing here treats an existing tag as an error. The verdict returns on the ordinary
+# `BuildSuccessful`/`BuildFailed` with `commitSha` = the merged sha, which is what qits-projects'
+# `BuildStatusListener` matches on together with `repoId`.
+#
+# ci-event-release.yml BESIDE THIS FILE IS UNTOUCHED and is still the other half: it reacts to this
+# repository's release TAG and publishes the released coordinate. This file names a build by the
+# merged sha; that one names a release by its version. Neither pushes the other's coordinate.
+#
+# THE IMAGE NAME IS NOT THE REPOSITORY NAME. This publishes `qits/workspace-base`, because that is
+# the name every consuming Dockerfile already writes — qits-workspace-daemon's
+# docker/Dockerfile.workspace and the project-agent images take it as their base. Renaming it to
+# match the repository would break them for nothing. The repository name is where the recipe lives;
+# `qits/workspace-base` is what the recipe produces.
+#
+# ONE TAG PER PIPELINE. Do not add a second `-t` and a second push here. A sibling repository tried
+# `docker build -t A -t B` then pushed both, and the second push failed with "tag does not exist":
+# BuildKit's exporter does not reliably leave every alias of a multi-tag build in the local image
+# store. Split the coordinates instead — this pipeline owns the sha, ci-event-release.yml owns the
+# version.
+#
+# No `--network` flag: nothing in this build dials the platform. The base image is pulled through
+# the OCI mirror by the daemon, not by the build.
+#
+# `set -eu` is load-bearing rather than tidy: the daemon runs the script with `bash -c` and no -e,
+# so without it a failed build is swallowed by the next command's exit code — the push fails,
+# `docker rmi || true` answers 0, and the run reports SUCCESS. The deployer is then told an image
+# exists that does not. -u makes an unset registry variable stop the step too.
+#
+# The timeout is large on purpose. This is a ~3.4 GB image: two apt trees, a JDK, node + pnpm, a
+# Playwright Chromium with its shared-library deps, two agent CLIs and jdtls, all fetched from the
+# network. An hour is not enough headroom on a cold cache.
+
+event: ReleaseRequestChanged
+
+when:
+  # repoName, not repoId: the git host's storage coordinate is an opaque UUID since
+  # the identity cutover, so a name match on repoId is not dependable. The event
+  # echoes the public name; a rename updates this line in the same campaign.
+  - repoName: { exact: qits-workspace-oci }
+
+checkout:
+  branch: backingBranch
+  sha: mergedSha
+
+steps:
+  - image: qits/build-images/ci-base:latest
+    docker: true
+    timeout-seconds: 7200
+    script: |
+      set -eu
+      ref="$QITS_REGISTRY/$QITS_IMAGE_REPOSITORY/workspace-base:$QITS_CI_SHA"
+      docker build -t "$ref" -f Dockerfile .
+      docker push "$ref"
+      # NO `docker rmi "$ref"`: on a CI host it frees nothing — the layers stay in the builder's
+      # cache either way — while under the containerd image store it drops the last reference to
+      # content a concurrent build of this same Dockerfile may still be resolving. Two builds of
+      # this one Dockerfile do run concurrently, main's and environment/dev's, which is the race
+      # that broke the release of 2026-08-11.
