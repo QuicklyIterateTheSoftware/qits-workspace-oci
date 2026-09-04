@@ -35,8 +35,9 @@ Three small things on PATH, all inert until qits-workspaces injects the environm
 - `qits-git-credential` — git's credential helper, answering the injected githost authority with a
   short-lived bearer minted from the container's commissioned client (and nothing else: a checkout
   can name arbitrary submodule remotes).
-- `qits-token <audience>` — the same mint, for the hands that are not git: the release door, the ci
-  run list, any platform API. One token per service, the audience is that service's alias.
+- `qits-token <audience>` — the same mint, for the hands that are not git: qits-projects' release
+  requests, the ci run list, any platform API. One token per service, the audience is that service's
+  alias.
 - `qits-npm-ci [args]` — `npm ci` with the lockfile's developer-host `resolved` origins swapped for
   the platform's registries for the duration of the install and restored byte for byte afterwards.
   `npm` itself is a shim that carries the `@qits` scope (see the Dockerfile).

@@ -65,8 +65,8 @@ steps:
       # ONE TAG PER PIPELINE. Push only `:$version` here — never also `:latest` or the sha. A
       # sibling repository tried `docker build -t A -t B` then pushed both, and the second push
       # failed with "tag does not exist": BuildKit's exporter does not reliably leave every alias of
-      # a multi-tag build in the local image store. ci-post-receive.yml owns the sha coordinate;
-      # this pipeline owns the version coordinate.
+      # a multi-tag build in the local image store. ci-event-release-request.yml owns the sha
+      # coordinate; this pipeline owns the version coordinate.
       ref="$QITS_REGISTRY/$QITS_IMAGE_REPOSITORY/workspace-base:$version"
       docker build -t "$ref" -f Dockerfile .
       docker push "$ref"
