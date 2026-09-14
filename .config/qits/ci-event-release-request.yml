@@ -98,6 +98,70 @@ steps:
       # push into nowhere.
       : "${BUILDKIT_HOST:?the platform builder is off or not injected; this recipe builds only through it}"
       : "${QITS_BUILD_REGISTRY:?}"
+      # --- the pinned qits CLI, fetched HERE into the build context --------------------------------
+      # THE DOCKERFILE CANNOT FETCH THIS FILE AND THIS STEP CAN — that is the whole reason the
+      # download lives in a CI recipe instead of a `curl` layer beside Claude Code and jdtls. Those
+      # layers dial the OPEN INTERNET, which buildkitd reaches; the qits CLI lives in the PLATFORM's
+      # artifacts store, and this recipe pair is explicit about that (ci-event-release-request.yml's
+      # header, "This build dials nothing on the PLATFORM"): the build runs in buildkitd's namespace
+      # with no commissioned credential and no platform address of any kind in the recipe. Doing it
+      # there would mean passing the store's URL in as a build arg and the credential in as a secret
+      # mount, and a hermetic build would stop being one — a large change for one 42 MB file.
+      #
+      # AND THE STORE IS GATED, MOSTLY. Measured 2026-09-14 against dev-qits-artifacts:8080:
+      # `GET /artifacts/api/repositories/daemons/daemons` answers 401 with no token, 200 with a
+      # `qits-platform` bearer, and 401 for HTTP basic with the commissioned pair. The one download
+      # URL below is the exception — it answered 200 with no token at all on the same day — and the
+      # bearer goes with it anyway, deliberately: a fetch that works only while one door happens to
+      # stand open is a build that breaks the day somebody closes it, and the neighbouring door is
+      # already closed. It costs one token mint, in a container that holds the credential regardless.
+      #
+      # THIS CONTAINER HAS EVERYTHING THE BUILDER LACKS: CiDaemonLauncher injects
+      # QITS_COMMISSIONED_CLIENT_ID, QITS_COMMISSIONED_CLIENT_SECRET, QITS_GIT_AUTH_TOKEN_URL and
+      # QITS_ARTIFACTS_URL into every step container. So the fetch happens here, into the working
+      # directory, and `buildctl build --local context=.` sends the file up with the rest of the
+      # context — where the Dockerfile's `COPY qits /usr/local/bin/qits` picks it up.
+      #
+      # THE VERSION IS THE DOCKERFILE'S, SCRAPED, NEVER RESTATED. The pin is committed as one
+      # `ARG QITS_CLI_VERSION=` line and read back out of it, so this recipe and the image can not
+      # disagree about which CLI the image ships; the same shape qits-ci-daemon's recipe uses to read
+      # its musl toolchain URLs out of a Dockerfile ARG. Bumping the CLI is an edit to that one line.
+      #
+      # THIS BLOCK IS BYTE-IDENTICAL IN ci-event-release-request.yml AND ci-event-release.yml, for the
+      # same reason their buildctl lines are: the builder's cache is shared, and a context that
+      # differs between the two would turn the release build that follows a green fold from a stack of
+      # cache hits into a second assembly of the whole toolchain.
+      #
+      # EVERY MISSING INPUT FAILS LOUDLY AND BY NAME. `set -u` alone would stop the step, but on a
+      # `curl: (3) URL rejected` twenty lines from the cause; and the token pipeline below cannot rely
+      # on -e at all, because a failing curl feeding a succeeding sed is a pipeline that exits 0 with
+      # an empty token. The `:?` guards are what turn each of those into one sentence naming the
+      # input.
+      cli_version=$(sed -nE 's#^ARG QITS_CLI_VERSION=(.+)$#\1#p' Dockerfile)
+      : "${cli_version:?Dockerfile declares no ARG QITS_CLI_VERSION; the image pins no qits CLI}"
+      : "${QITS_ARTIFACTS_URL:?the artifacts store address is not injected; the pinned qits CLI cannot be fetched}"
+      : "${QITS_COMMISSIONED_CLIENT_ID:?no commissioned client id; the artifacts store answers 401 without a bearer}"
+      : "${QITS_COMMISSIONED_CLIENT_SECRET:?no commissioned client secret; the artifacts store answers 401 without a bearer}"
+      : "${QITS_GIT_AUTH_TOKEN_URL:?no idp token endpoint injected; the qits-platform bearer cannot be minted}"
+      # `qits-platform` is the audience the artifacts store accepts, and jq is deliberately not used:
+      # this is the one extraction in this file that must keep working in a step image that carries
+      # only curl and sed, so it reads the field the way the composed release prelude does.
+      cli_token=$(curl -fsS --connect-timeout 5 --max-time 30 \
+        -u "$QITS_COMMISSIONED_CLIENT_ID:$QITS_COMMISSIONED_CLIENT_SECRET" \
+        -H 'Content-Type: application/x-www-form-urlencoded' \
+        --data "grant_type=client_credentials&audience=qits-platform" \
+        "$QITS_GIT_AUTH_TOKEN_URL" \
+        | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+      : "${cli_token:?the idp minted no qits-platform bearer for the commissioned client}"
+      curl -fsSL --retry 2 --retry-delay 2 -H "Authorization: Bearer $cli_token" \
+        -o qits "$QITS_ARTIFACTS_URL/artifacts/daemons/qits-platform-access-cli/$cli_version"
+      # -f already refuses a 4xx/5xx, so what is left to catch is the honest-looking nothing: a 200
+      # with an empty body leaves a zero-byte file that COPYs perfectly and produces an image whose
+      # `qits` cannot run. The Dockerfile runs `qits --help` for the same reason from the other side;
+      # this one keeps the failure in the half of the run that names the download.
+      [ -s qits ] || { echo "the qits CLI download is empty: $QITS_ARTIFACTS_URL/artifacts/daemons/qits-platform-access-cli/$cli_version" >&2; exit 1; }
+      echo "qits-workspace-oci: fetched qits-platform-access-cli $cli_version into the build context" >&2
+
       # `push=true` IS THE PUBLISH: the image goes from the builder straight to the registry and
       # never enters any local image store. That retires the old rmi note wholesale — it described a
       # containerd store this pipeline no longer touches. The concurrent builds it worried about are
