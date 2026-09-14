@@ -392,15 +392,22 @@ RUN chmod 0755 /usr/local/bin/npm \
 # A HAND-RUN `docker build` MUST FETCH THE FILE INTO THIS DIRECTORY FIRST — README.md gives the exact
 # curl, bearer and all. Without it the COPY fails outright, which is the right place to find out.
 ARG QITS_CLI_VERSION=2026.914.122043
-# THE `COPY` IS NOT HERE YET, AND THAT IS THIS RELEASE, NOT AN OVERSIGHT. qits-ci discovers and
-# parses `.config/qits/ci-event-*.yml` at this repository's `main` head, ALWAYS — a release request
-# must not be able to alter the CI that gates it — so the fetch the recipes gain in this same commit
-# does not run for the request that carries it, and a `COPY qits` here would be resolved against a
-# context that has no such file. Measured rather than reasoned: release request bb02b58e, gating run
-# 9ec9d651, `failed to compute cache key: "/qits": not found`, on a tree that had both halves.
-#
-# So this release lands the recipes and the pin alone. Both are inert for the tree it builds — an
-# ARG nothing reads, and one more file in a context nothing copies — and once they are on `main`,
-# the very next release request is gated by a pipeline that fetches, which is the one that adds the
-# two lines below this comment. The ARG already names the version that one ships, so the pin and
-# the fetch land together and cannot arrive out of step.
+COPY qits /usr/local/bin/qits
+RUN chmod 0755 /usr/local/bin/qits \
+    # A download is the step that goes wrong QUIETLY: a truncated body, an error page the store
+    # answered 200 with, a binary built for the other architecture. Run it once, here, so a bad fetch
+    # breaks THIS BUILD rather than every agent container that ever starts from the image — `--help`
+    # is the cheapest invocation that still has to load and start the whole picocli command surface.
+    #
+    # The version is NOT asserted out of the binary, and that is a finding rather than an oversight:
+    # the CLI takes picocli's `mixinStandardHelpOptions` with no `versionProvider` (AccessCli.java,
+    # read 2026-09-14), so `qits --version` prints NOTHING and exits 0 — measured on the pinned
+    # binary the same day, zero bytes of output, and in this image's environment not even that (the
+    # QUARKUS_ANALYTICS_DISABLED set above makes it emit one unrelated Quarkus warning instead). A
+    # check against it would assert nothing at all, which is worse than no check because it reads
+    # like one. The ARG above is therefore the only statement of which version this image ships, and
+    # recording it in a file is what makes it answerable from INSIDE a container: a LABEL needs a
+    # docker daemon and a caller that knows its own container id, which is the same reasoning as
+    # /etc/qits-renderer-provenance above.
+    && /usr/local/bin/qits --help >/dev/null \
+    && echo "qits=${QITS_CLI_VERSION}" > /etc/qits-cli-version

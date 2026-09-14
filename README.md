@@ -30,7 +30,35 @@ Dockerfiles already write.
 
 ## What a workspace gets from it besides tools
 
-Three small things on PATH, all inert until qits-workspaces injects the environment they read:
+### `qits` — the platform's own command line
+
+On PATH as `qits`, **pinned** at the version in the Dockerfile's `ARG QITS_CLI_VERSION` (also written
+to `/etc/qits-cli-version`, so a container can answer the question about itself). It is what an agent
+should reach for first: projects and repositories, tickets, epics, release requests, CI runs and
+their logs, domain events, live telemetry, and `qits artifacts publish` from a CI step.
+
+**There is no login.** Inside a container the CLI signs itself in from the commissioned pair
+qits-workspaces injects (`QITS_COMMISSIONED_CLIENT_ID` / `QITS_COMMISSIONED_CLIENT_SECRET`), so it
+acts as the container's **own agent identity** and never as the operator. That identity reads: the
+reads work, and a write only an operator may make answers **403**. A 403 from `qits` is the platform
+saying "not this identity", not a broken install.
+
+The version is pinned into the image rather than downloaded when a container starts, so a container
+always runs the version its image was built with and starts with no download and no store to be
+reachable. **Moving the pin** is: edit the one `ARG QITS_CLI_VERSION=` line in the `Dockerfile`,
+release this repository, and let the consuming images (`qits-workspace-daemon`, the editor and
+project-agent images) take the new base — the same path every other pin here travels.
+
+The binary is **not fetched by the Dockerfile**. This build dials nothing on the platform, and the
+artifacts store is not anonymous, so the CI **step** container — which holds the commissioned pair
+and the store's address — fetches the file into the build context and the Dockerfile only `COPY`s it.
+Both recipes in `.config/qits/` carry that fetch, byte for byte identical, and both read the version
+out of the ARG rather than restating it. The `Dockerfile` block at the foot of the file has the full
+reasoning, including why it sits last.
+
+### Three shell helpers, older than the CLI and not retired by it
+
+All inert until qits-workspaces injects the environment they read:
 
 - `qits-git-credential` — git's credential helper, answering the injected githost authority with a
   short-lived bearer minted from the container's commissioned client (and nothing else: a checkout
@@ -47,7 +75,23 @@ and the Maven settings that reach the platform's plain-http repository.
 
 ## Building by hand
 
+**Fetch the `qits` binary into the context first**, or the `COPY` fails: the Dockerfile expects the
+file the CI step puts there, and nothing inside the build can fetch it — the builder holds no
+platform credential and the recipe hands it no platform address. With a `qits-platform` bearer in
+`$token`:
+
+    version=$(sed -nE 's#^ARG QITS_CLI_VERSION=(.+)$#\1#p' Dockerfile)
+    curl -fsSL -H "Authorization: Bearer $token" \
+      -o qits "$QITS_ARTIFACTS_URL/artifacts/daemons/qits-platform-access-cli/$version"
+
     docker build -t qits/workspace-base:latest .
+
+That download URL answered 200 without a token when it was last measured (2026-09-14) and its
+neighbour — the daemon list API — answered 401, so send the bearer and do not build a habit on the
+open door. Inside a step container the recipes mint it from the commissioned pair at
+`$QITS_GIT_AUTH_TOKEN_URL` (`grant_type=client_credentials&audience=qits-platform`); from your own
+machine, `qits login` with an already-installed CLI is the easier road. The fetched file is
+gitignored, so it never lands in a commit.
 
 Expect a long, network-heavy build — roughly 3.4 GB of image, fetching two apt trees, a JDK, node,
 a Chromium and several CLIs. CI allows two hours for it.
