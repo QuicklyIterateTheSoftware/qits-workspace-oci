@@ -71,6 +71,14 @@ RUN printf '[credential]\n\thelper = /usr/local/bin/qits-git-credential\n' > /et
 # They exist because an agent that could push, build and test inside a workspace still could not
 # release from it without reverse-engineering the door (integrator.md, ad-hoc workspace 351,
 # 2026-08-20) — the guide now names these two.
+#
+# THESE THREE EXIST BECAUSE THERE WAS NO CLI, AND THERE IS ONE NOW: `qits`, at the foot of this file.
+# It is what an agent should reach for first, and the block down there says why it sits last rather
+# than here beside its ancestors. NONE OF THE THREE IS RETIRED BY IT, which is worth stating so
+# nobody reads the new block as a replacement: `qits-git-credential` is the helper
+# /etc/qits-gitconfig names, so git itself runs it on every HTTP remote and no agent decision is
+# involved; `qits-token` and `qits-npm-ci` are named by the workspace guide and by action scripts
+# written against them. Dropping any of the three is a separate change with its own callers to find.
 COPY qits-token /usr/local/bin/qits-token
 COPY qits-npm-ci /usr/local/bin/qits-npm-ci
 RUN chmod 0755 /usr/local/bin/qits-token /usr/local/bin/qits-npm-ci \
@@ -332,3 +340,67 @@ RUN chmod 0755 /usr/local/bin/npm \
     # registry. Assert the resolution at build time rather than discovering it in a build log.
     && [ "$(command -v npm)" = /usr/local/bin/npm ] \
     && [ -x /usr/bin/npm ]
+
+# ---- the qits CLI, on PATH in every agent container ------------------------------------------
+# `qits` is the platform's own command line, and it is the thing an agent should reach for before
+# any of the three shell helpers above: projects and repositories, tickets, epics, release requests,
+# CI runs and their logs, domain events, live telemetry, and `qits artifacts publish` for a CI step.
+# It needs no login here — inside a container it signs ITSELF in from the commissioned pair
+# ($QITS_COMMISSIONED_CLIENT_ID / $QITS_COMMISSIONED_CLIENT_SECRET) that qits-workspaces injects, so
+# there is nothing for a session to hand it and no token for an agent to hold. Every agent container
+# — workspace, editor, project-agent — is built FROM this image, which is the whole reason the binary
+# belongs in the base rather than in three consuming Dockerfiles that would each pin it separately.
+#
+# THE BINARY ARRIVES WITH THE BUILD CONTEXT; THIS FILE ONLY COPIES IT. That is the part worth
+# reading twice, because the obvious recipe — a `curl` here, like the Claude Code, Kimi and jdtls
+# layers above — cannot work. Those three dial the OPEN INTERNET, and buildkitd can reach it; this
+# one would have to dial the PLATFORM, and .config/qits/ci-event-release-request.yml says at length
+# that this build dials nothing on the platform: it runs in buildkitd's namespace on qits-net, with
+# no commissioned credential and no platform address anywhere in the recipe. Fixing that here means
+# a build arg for the store's URL and a secret mount for the credential, and a deliberately hermetic
+# build stops being one — a large change for one 42 MB file.
+#
+# That store is also gated, mostly. Measured 2026-09-14 against dev-qits-artifacts:8080:
+# `GET /artifacts/api/repositories/daemons/daemons` answers 401 with no token, 200 with a
+# `qits-platform` bearer, and 401 for HTTP basic with the commissioned pair; the single download URL
+# the recipes use answered 200 anonymously on the same day, and they send the bearer regardless —
+# the reasoning is beside the fetch, in both of them.
+#
+# The CI STEP container already holds both halves — CiDaemonLauncher injects
+# QITS_COMMISSIONED_CLIENT_ID, QITS_COMMISSIONED_CLIENT_SECRET, QITS_GIT_AUTH_TOKEN_URL and
+# QITS_ARTIFACTS_URL into every step — so the STEP mints the bearer and fetches the file, and
+# `buildctl build --local context=.` sends it up with everything else. Both recipes carry that fetch,
+# byte for byte identical, exactly as their buildctl lines already are, and both scrape the version
+# out of the ARG below rather than restating it: one source of truth, so the pin and the fetch cannot
+# drift. (qits-ci-daemon's recipe reads its musl toolchain URLs out of a Dockerfile ARG the same way,
+# for the same reason.)
+#
+# PINNED INTO THE IMAGE, NOT DOWNLOADED AT CONTAINER START — the decision, and it matches ticket
+# ead74408's direction for CI: a container runs the version its image was built with, and it starts
+# with no download, no store to be reachable and no latest-version lookup to answer differently on
+# two consecutive container creations. Moving the pin is one `sed` on the single ARG line below, a
+# release of this repository, and the consuming images taking the new base.
+#
+# IT SITS AT THE FOOT OF THE FILE, NOT BESIDE ITS THREE ANCESTORS ABOVE, AND THAT IS DELIBERATE. A
+# `COPY` is cache-keyed on the file's content, so every layer BELOW it rebuilds when the pin moves.
+# Beside the helpers it would sit above the JDK, node, the docker client, the Playwright Chromium,
+# Claude Code, Kimi and jdtls — so bumping the CLI would re-assemble ~3.4 GB of toolchain from the
+# network, on a pipeline that budgets two hours precisely because it expects that work to be cache
+# hits. Here, a bump costs one layer. The comment on the helper block above is the pointer that keeps
+# the two readable as one subject.
+#
+# A HAND-RUN `docker build` MUST FETCH THE FILE INTO THIS DIRECTORY FIRST — README.md gives the exact
+# curl, bearer and all. Without it the COPY fails outright, which is the right place to find out.
+ARG QITS_CLI_VERSION=2026.914.122043
+# THE `COPY` IS NOT HERE YET, AND THAT IS THIS RELEASE, NOT AN OVERSIGHT. qits-ci discovers and
+# parses `.config/qits/ci-event-*.yml` at this repository's `main` head, ALWAYS — a release request
+# must not be able to alter the CI that gates it — so the fetch the recipes gain in this same commit
+# does not run for the request that carries it, and a `COPY qits` here would be resolved against a
+# context that has no such file. Measured rather than reasoned: release request bb02b58e, gating run
+# 9ec9d651, `failed to compute cache key: "/qits": not found`, on a tree that had both halves.
+#
+# So this release lands the recipes and the pin alone. Both are inert for the tree it builds — an
+# ARG nothing reads, and one more file in a context nothing copies — and once they are on `main`,
+# the very next release request is gated by a pipeline that fetches, which is the one that adds the
+# two lines below this comment. The ARG already names the version that one ships, so the pin and
+# the fetch land together and cannot arrive out of step.
