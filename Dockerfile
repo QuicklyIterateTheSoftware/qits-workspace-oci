@@ -391,7 +391,7 @@ RUN chmod 0755 /usr/local/bin/npm \
 #
 # A HAND-RUN `docker build` MUST FETCH THE FILE INTO THIS DIRECTORY FIRST — README.md gives the exact
 # curl, bearer and all. Without it the COPY fails outright, which is the right place to find out.
-ARG QITS_CLI_VERSION=2026.914.122043
+ARG QITS_CLI_VERSION=2026.915.100425
 COPY qits /usr/local/bin/qits
 RUN chmod 0755 /usr/local/bin/qits \
     # A download is the step that goes wrong QUIETLY: a truncated body, an error page the store
