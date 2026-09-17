@@ -1,0 +1,67 @@
+archetype: oci
+artifacts:
+  - { type: docker, name: qits/workspace-base, sbom: sbom.json }
+
+# ONE IMAGE, AND STILL NOT THE ARCHETYPE'S. The build CONTEXT has to be prepared first: the
+# Dockerfile pins `ARG QITS_CLI_VERSION`, and the matching qits CLI binary has to be fetched into
+# the context before buildctl runs — behind a client-credentials token minted at the idp, because
+# the artifacts store answers 401 without a bearer. The oci recipe prepares nothing and passes no
+# build-arg, so it would push an image with no CLI in it and nothing would say so.
+release-request:
+  - image: qits/build-images/ci-base:latest
+    build: true
+    timeout-seconds: 7200
+    script: |
+      cli_version=$(sed -nE 's#^ARG QITS_CLI_VERSION=(.+)$#\1#p' Dockerfile)
+      : "${cli_version:?Dockerfile declares no ARG QITS_CLI_VERSION; the image pins no qits CLI}"
+      : "${QITS_ARTIFACTS_URL:?the artifacts store address is not injected}"
+      : "${QITS_COMMISSIONED_CLIENT_ID:?no commissioned client id}"
+      : "${QITS_COMMISSIONED_CLIENT_SECRET:?no commissioned client secret}"
+      : "${QITS_GIT_AUTH_TOKEN_URL:?no idp token endpoint injected}"
+      cli_token=$(curl -fsS --connect-timeout 5 --max-time 30 \
+        -u "$QITS_COMMISSIONED_CLIENT_ID:$QITS_COMMISSIONED_CLIENT_SECRET" \
+        -H 'Content-Type: application/x-www-form-urlencoded' \
+        --data "grant_type=client_credentials&audience=qits-platform" \
+        "$QITS_GIT_AUTH_TOKEN_URL" \
+        | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+      : "${cli_token:?the idp minted no qits-platform bearer for the commissioned client}"
+      # THE FILE IS CALLED `qits` BECAUSE THAT IS WHAT THE DOCKERFILE COPIES AND WHAT THE IMAGE PUTS
+      # ON $PATH. The ARTIFACT it comes from is `qits-platform-access-cli`; the two names differ on
+      # purpose and neither may be changed here.
+      curl -fsSL --retry 2 --retry-delay 2 -H "Authorization: Bearer $cli_token" \
+        -o qits "$QITS_ARTIFACTS_URL/artifacts/daemons/qits-platform-access-cli/$cli_version"
+      [ -s qits ] || { echo "the qits CLI download is empty" >&2; exit 1; }
+      ref="$QITS_BUILD_REGISTRY/$QITS_IMAGE_REPOSITORY/workspace-base:$QITS_CI_SHA"
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=. \
+        --output "type=image,name=$ref,push=true"
+
+release:
+  - image: qits/build-images/ci-base:latest
+    build: true
+    timeout-seconds: 7200
+    script: |
+      cli_version=$(sed -nE 's#^ARG QITS_CLI_VERSION=(.+)$#\1#p' Dockerfile)
+      : "${cli_version:?Dockerfile declares no ARG QITS_CLI_VERSION; the image pins no qits CLI}"
+      : "${QITS_ARTIFACTS_URL:?the artifacts store address is not injected}"
+      : "${QITS_COMMISSIONED_CLIENT_ID:?no commissioned client id}"
+      : "${QITS_COMMISSIONED_CLIENT_SECRET:?no commissioned client secret}"
+      : "${QITS_GIT_AUTH_TOKEN_URL:?no idp token endpoint injected}"
+      cli_token=$(curl -fsS --connect-timeout 5 --max-time 30 \
+        -u "$QITS_COMMISSIONED_CLIENT_ID:$QITS_COMMISSIONED_CLIENT_SECRET" \
+        -H 'Content-Type: application/x-www-form-urlencoded' \
+        --data "grant_type=client_credentials&audience=qits-platform" \
+        "$QITS_GIT_AUTH_TOKEN_URL" \
+        | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+      : "${cli_token:?the idp minted no qits-platform bearer for the commissioned client}"
+      curl -fsSL --retry 2 --retry-delay 2 -H "Authorization: Bearer $cli_token" \
+        -o qits "$QITS_ARTIFACTS_URL/artifacts/daemons/qits-platform-access-cli/$cli_version"
+      [ -s qits ] || { echo "the qits CLI download is empty" >&2; exit 1; }
+      ref="$QITS_BUILD_REGISTRY/$QITS_IMAGE_REPOSITORY/workspace-base:$QITS_VERSION"
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=. \
+        --output "type=image,name=$ref,push=true"
+      qits-publish sbom from-dockerfile \
+        --root-name qits/workspace-base --root-version "$QITS_VERSION" \
+        --dockerfile Dockerfile \
+        -o sbom.json
