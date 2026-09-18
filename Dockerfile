@@ -372,23 +372,12 @@ RUN chmod 0755 /usr/local/bin/npm \
 # `buildctl build --local context=.` sends it up with everything else. Both recipes carry that fetch,
 # byte for byte identical, exactly as their buildctl lines already are.
 #
-# THE PIN IS NOT THIS LINE ANY MORE. It is a maven property — `qits.platform-access-cli-binary.version`
+# THE VERSION IS NOT IN THIS FILE. It is a maven property pin — `qits.platform-access-cli-binary.version`
 # in this repository's `pom.xml`, on a dependency of `eu.wohlben.qits:qits-platform-access-cli-binary`
-# — and both recipes read it from there, fetch that version from the daemons store and pass it in as
-# `--opt build-arg:QITS_CLI_VERSION=`. The pom is the source of truth; the `ARG` below is how the
-# value reaches the build.
-#
-# THE DEFAULT ON THAT ARG IS A ONE-RELEASE SCAFFOLD AND IT GOES IN THE VERY NEXT COMMIT. It is here
-# because a release request cannot alter the CI that gates it: qits-ci discovers, parses and composes
-# `.config/qits/release.yml` at this repository's `main` head ALWAYS, and takes only the branch and
-# sha to check out from the fold — so the recipe that gates THIS tree is the one main carries today,
-# which still reads the version with `sed` off the `ARG QITS_CLI_VERSION=` line below. Without a
-# default that scrape returns nothing, the recipe's `: "${cli_version:?…}"` guard exits 1, and the
-# release request can never go green. (This exact file was bitten by this exact rule on 2026-09-14.)
-# So the recipe change lands first while it is INERT for the tree it builds, and the default is
-# carried one release longer, set to the SAME string the pom names so the two cannot disagree while
-# both exist. The next release is gated by the new recipe, and then the default is deleted and the
-# pom is the only statement.
+# — and the `ARG` below has NO DEFAULT: both recipes read the property out of the pom, fetch that
+# version from the daemons store, and pass it in with `--opt build-arg:QITS_CLI_VERSION=`. One source
+# of truth, so the pin and the fetch cannot drift; a default here would be a second one, and two
+# strings that must agree eventually do not.
 #
 # WHY IT MOVED OUT OF THIS FILE, since the `ARG` was the more obvious home and held it for months.
 # Nothing bumped it and nothing kept it alive. qits-platform-maintenance DOES read this Dockerfile —
@@ -419,11 +408,10 @@ RUN chmod 0755 /usr/local/bin/npm \
 # hits. Here, a bump costs one layer. The comment on the helper block above is the pointer that keeps
 # the two readable as one subject.
 #
-# A HAND-RUN `docker build` MUST FETCH THE FILE INTO THIS DIRECTORY FIRST AND SHOULD PASS THE ARG —
+# A HAND-RUN `docker build` MUST FETCH THE FILE INTO THIS DIRECTORY FIRST AND PASS THE ARG —
 # README.md gives the exact curl, bearer and `--build-arg` line. Without the file the COPY fails
-# outright, which is the right place to find out; without the arg the scaffold default below still
-# covers it, for one release.
-ARG QITS_CLI_VERSION=2026.918.142112
+# outright, and without the arg the RUN below does; both are the right place to find out.
+ARG QITS_CLI_VERSION
 COPY qits /usr/local/bin/qits
 RUN chmod 0755 /usr/local/bin/qits \
     # A download is the step that goes wrong QUIETLY: a truncated body, an error page the store
@@ -441,5 +429,16 @@ RUN chmod 0755 /usr/local/bin/qits \
     # recording it in a file is what makes it answerable from INSIDE a container: a LABEL needs a
     # docker daemon and a caller that knows its own container id, which is the same reasoning as
     # /etc/qits-renderer-provenance above.
+    #
+    # WHICH IS EXACTLY WHY AN UNPASSED ARG HAS TO BREAK THE BUILD. An `ARG` with no default expands
+    # to the empty string — silently, like every other unset shell variable — so without this guard a
+    # builder that forgot `--build-arg` would produce a perfectly working image whose one statement
+    # about its own CLI reads `qits=`. That is worse than a missing file: the COPY above fails loudly
+    # when the binary is absent, while an empty version is a wrong answer given confidently to
+    # everything that reads /etc/qits-cli-version afterwards. The recipes read the version out of
+    # pom.xml and pass it; a hand-run build passes it the same way (README.md).
+    && { [ -n "${QITS_CLI_VERSION}" ] || { \
+         echo "QITS_CLI_VERSION was not passed: build with --build-arg QITS_CLI_VERSION=<pom.xml's qits.platform-access-cli-binary.version>" >&2; \
+         exit 1; }; } \
     && /usr/local/bin/qits --help >/dev/null \
     && echo "qits=${QITS_CLI_VERSION}" > /etc/qits-cli-version
