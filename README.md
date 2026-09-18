@@ -103,12 +103,10 @@ platform credential and the recipe hands it no platform address. With a `qits-pl
 
     docker build --build-arg QITS_CLI_VERSION="$version" -t qits/workspace-base:latest .
 
-**Pass the `--build-arg`.** The pom is the one source of truth, and that is the same expression the
-recipes use — read with `sed` rather than with maven because the step image has no JDK in it. For
-this one release `ARG QITS_CLI_VERSION` still carries a default, set to the same string the pom
-names: qits-ci composes the recipe at `main`'s head always, so the recipe gating this tree is the
-previous one, which still scrapes that ARG line. The default goes in the next release and the arg
-becomes mandatory.
+**The `--build-arg` is not optional.** `ARG QITS_CLI_VERSION` carries no default — the pom is the one
+source of truth — and the build refuses an empty one rather than writing `qits=` into
+`/etc/qits-cli-version`. That is the same expression the recipes use; the pom is read with `sed`
+rather than with maven because the step image has no JDK in it.
 
 That download URL answered 200 without a token when it was last measured (2026-09-14) and its
 neighbour — the daemon list API — answered 401, so send the bearer and do not build a habit on the
