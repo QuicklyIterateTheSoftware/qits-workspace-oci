@@ -76,7 +76,7 @@
              internal pin, on a maintenance/* branch, and this repository's own release request gates
              the move. A hand-written pin asserts a version nobody gated, and the next bump
              overwrites it regardless. -->
-        <qits.platform-access-cli-binary.version>2026.918.191146</qits.platform-access-cli-binary.version>
+        <qits.platform-access-cli-binary.version>2026.918.194623</qits.platform-access-cli-binary.version>
         <!-- Where this resolves the platform's own artifacts. The settings file mirrors this
              repository id onto the in-network address inside a CI step; a declared repository is what
              gives it something to mirror. -->
