@@ -5,10 +5,26 @@
   <mirrors>
     <!-- Exact repository-id matches win over Maven's external:http:* blocker without permitting
          arbitrary HTTP repositories. -->
+    <!-- THE URL IS THE `-D` PROPERTY, NOT `${env.QITS_MAVEN_REPOSITORY_URL}`, AND THAT IS THE ONE
+         LINE THAT DIFFERS FROM THE FILE THIS WAS COPIED FROM. qits-ci injects
+         QITS_MAVEN_REGISTRY_URL into a step and nothing injects QITS_MAVEN_REPOSITORY_URL, so the
+         env spelling interpolates to NOTHING in a release step — and Maven does not fail on an
+         unresolved property here, it dials the literal text: `Could not transfer … from/to
+         qits-maven-network (${env.QITS_MAVEN_REPOSITORY_URL}): Cannot access … with type default`.
+         Measured on gating run 3b1e7b57, and reproduced here against a clean local repository with
+         the variable unset.
+
+         qits-workspace-editor-oci carries the env spelling and is fine with it, which is why the
+         copy came over unchanged and why this is worth a comment rather than a silent edit: that
+         reactor resolves junit and nothing else, so its mirror is never consulted for a platform
+         artifact. THIS one exists to resolve `eu.wohlben.qits:qits-platform-access-cli-binary`
+         through that mirror, so the URL is load-bearing on every build. `qits.maven.repository.url`
+         is what both recipes already pass with `-D` and what the pom declares, so the mirror now
+         reads the same one value the rest of this repository does. -->
     <mirror>
       <id>qits-maven-network</id>
       <mirrorOf>qits-maven</mirrorOf>
-      <url>${env.QITS_MAVEN_REPOSITORY_URL}</url>
+      <url>${qits.maven.repository.url}</url>
     </mirror>
     <!-- Maven Central through qits-platform-mirror's pull-through cache. The exact repository id is
          the same blocker exemption the entry above uses, scoped to the one repository the profile
