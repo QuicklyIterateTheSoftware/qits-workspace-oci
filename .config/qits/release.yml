@@ -2,18 +2,55 @@ archetype: oci
 artifacts:
   - { type: docker, name: qits/workspace-base, sbom: sbom.json }
 
-# ONE IMAGE, AND STILL NOT THE ARCHETYPE'S. The build CONTEXT has to be prepared first: the
-# Dockerfile pins `ARG QITS_CLI_VERSION`, and the matching qits CLI binary has to be fetched into
-# the context before buildctl runs — behind a client-credentials token minted at the idp, because
-# the artifacts store answers 401 without a bearer. The oci recipe prepares nothing and passes no
-# build-arg, so it would push an image with no CLI in it and nothing would say so.
+# ONE IMAGE, AND STILL NOT THE ARCHETYPE'S. The build CONTEXT has to be prepared first: the qits CLI
+# binary this image ships has to be fetched into the context before buildctl runs — behind a
+# client-credentials token minted at the idp, because the artifacts store answers 401 without a
+# bearer — and the version has to be passed in as a build arg, because the Dockerfile's
+# `ARG QITS_CLI_VERSION` deliberately carries no default. The oci recipe prepares nothing and passes
+# no build-arg, so it would push an image with no CLI in it and nothing would say so.
+#
+# THE VERSION COMES OUT OF pom.xml NOW, not out of the Dockerfile. It used to be scraped from
+# `ARG QITS_CLI_VERSION=<version>` — a line nothing on the platform could bump and nothing could keep
+# alive in the daemons store, so it rotted on a clock and killed this pipeline with a bare
+# `curl: (22) ... 404` twice in three days. It is an ordinary maven property pin now,
+# `qits.platform-access-cli-binary.version`, which qits-platform-maintenance bumps and the store's GC
+# holds back; pom.xml's own comment carries the full argument. Ticket d0b1965f.
 release-request:
+  # THE MAVEN STEP RUNS FIRST, AND IT IS HERE TO FAIL LOUDLY RATHER THAN TO BUILD ANYTHING. It
+  # resolves `eu.wohlben.qits:qits-platform-access-cli-binary` at the pinned version and does nothing
+  # else — there is no source tree in this repository and the jar is never opened. What it buys is
+  # the failure mode: a pin naming a version the platform's maven registry no longer holds stops here,
+  # in a maven step, with the coordinate and both repository URLs printed, instead of two hours of
+  # toolchain later as an unexplained 404 out of a `curl` in the middle of context preparation. It is
+  # first for exactly that reason — the cheap check that can only fail for one reason goes before the
+  # expensive one that can fail for twenty.
+  #
+  # It is NOT a substitute for the fetch below, and neither is a substitute for the other: the maven
+  # registry and the daemons store are two stores with two retention policies, and the pin has to be
+  # alive in both. What the maven half also does is make the pin VISIBLE — a resolvable, released
+  # maven coordinate is what qits-platform-maintenance bumps and what the artifacts GC files as a
+  # reason to keep the daemon binary.
+  - image: qits/build-images/maven-base:latest
+    timeout-seconds: 1800
+    script: |
+      QITS_MAVEN_CENTRAL_URL="${QITS_MAVEN_PROXY_URL:-}" \
+      QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID-}" \
+      QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET-}" \
+      ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
+        -Dqits.maven.repository.url="$QITS_MAVEN_REGISTRY_URL"
+
   - image: qits/build-images/ci-base:latest
     build: true
     timeout-seconds: 7200
     script: |
-      cli_version=$(sed -nE 's#^ARG QITS_CLI_VERSION=(.+)$#\1#p' Dockerfile)
-      : "${cli_version:?Dockerfile declares no ARG QITS_CLI_VERSION; the image pins no qits CLI}"
+      # THE PIN IS READ WITH `sed`, NOT WITH MAVEN, and that is a fact about this step's image rather
+      # than a preference: `qits/build-images/ci-base` carries no maven and no java, and pulling a
+      # JDK in to read one line of XML would cost minutes per build. One property element, whole, on
+      # one line — which is also the shape qits-platform-maintenance's own bump step insists on when
+      # it edits this same line, so a pom that this expression cannot read is a pom the bump cannot
+      # write either.
+      cli_version=$(sed -nE 's#^[[:space:]]*<qits\.platform-access-cli-binary\.version>(.+)</qits\.platform-access-cli-binary\.version>[[:space:]]*$#\1#p' pom.xml)
+      : "${cli_version:?pom.xml declares no <qits.platform-access-cli-binary.version> property; the image pins no qits CLI}"
       : "${QITS_ARTIFACTS_URL:?the artifacts store address is not injected}"
       : "${QITS_COMMISSIONED_CLIENT_ID:?no commissioned client id}"
       : "${QITS_COMMISSIONED_CLIENT_SECRET:?no commissioned client secret}"
@@ -27,22 +64,33 @@ release-request:
       : "${cli_token:?the idp minted no qits-platform bearer for the commissioned client}"
       # THE FILE IS CALLED `qits` BECAUSE THAT IS WHAT THE DOCKERFILE COPIES AND WHAT THE IMAGE PUTS
       # ON $PATH. The ARTIFACT it comes from is `qits-platform-access-cli`; the two names differ on
-      # purpose and neither may be changed here.
+      # purpose and neither may be changed here. The VERSION is the third name for one thing: the
+      # maven pin above and this daemons-store coordinate are one string, published by one release.
       curl -fsSL --retry 2 --retry-delay 2 -H "Authorization: Bearer $cli_token" \
         -o qits "$QITS_ARTIFACTS_URL/artifacts/daemons/qits-platform-access-cli/$cli_version"
       [ -s qits ] || { echo "the qits CLI download is empty" >&2; exit 1; }
       ref="$QITS_BUILD_REGISTRY/$QITS_IMAGE_REPOSITORY/workspace-base:$QITS_CI_SHA"
       buildctl build --frontend dockerfile.v0 \
         --local context=. --local dockerfile=. \
+        --opt build-arg:QITS_CLI_VERSION="$cli_version" \
         --output "type=image,name=$ref,push=true"
 
 release:
+  - image: qits/build-images/maven-base:latest
+    timeout-seconds: 1800
+    script: |
+      QITS_MAVEN_CENTRAL_URL="${QITS_MAVEN_PROXY_URL:-}" \
+      QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID-}" \
+      QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET-}" \
+      ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
+        -Dqits.maven.repository.url="$QITS_MAVEN_REGISTRY_URL"
+
   - image: qits/build-images/ci-base:latest
     build: true
     timeout-seconds: 7200
     script: |
-      cli_version=$(sed -nE 's#^ARG QITS_CLI_VERSION=(.+)$#\1#p' Dockerfile)
-      : "${cli_version:?Dockerfile declares no ARG QITS_CLI_VERSION; the image pins no qits CLI}"
+      cli_version=$(sed -nE 's#^[[:space:]]*<qits\.platform-access-cli-binary\.version>(.+)</qits\.platform-access-cli-binary\.version>[[:space:]]*$#\1#p' pom.xml)
+      : "${cli_version:?pom.xml declares no <qits.platform-access-cli-binary.version> property; the image pins no qits CLI}"
       : "${QITS_ARTIFACTS_URL:?the artifacts store address is not injected}"
       : "${QITS_COMMISSIONED_CLIENT_ID:?no commissioned client id}"
       : "${QITS_COMMISSIONED_CLIENT_SECRET:?no commissioned client secret}"
@@ -60,8 +108,18 @@ release:
       ref="$QITS_BUILD_REGISTRY/$QITS_IMAGE_REPOSITORY/workspace-base:$QITS_VERSION"
       buildctl build --frontend dockerfile.v0 \
         --local context=. --local dockerfile=. \
+        --opt build-arg:QITS_CLI_VERSION="$cli_version" \
         --output "type=image,name=$ref,push=true"
+      # THE SBOM GENERATOR DOES NOT NEED THE BUILD ARG TODAY, AND IS GIVEN IT ANYWAY. `qits-publish
+      # sbom from-dockerfile` describes `FROM` lines: DockerfileSbom collects ARG defaults only to
+      # resolve a `${...}` inside one, and the single `FROM debian:bookworm-slim` at the head of this
+      # file reads no ARG at all. What makes the flag worth one word is the parser's treatment of an
+      # ARG with NO default — it records the empty string, and `expand` prefers a recorded empty
+      # string over an error — so the day a `FROM` here reads `${QITS_CLI_VERSION}`, an unpassed arg
+      # would resolve silently to nothing and publish a document naming a base image that does not
+      # exist. Passing it costs nothing and closes that quietly.
       qits-publish sbom from-dockerfile \
         --root-name qits/workspace-base --root-version "$QITS_VERSION" \
         --dockerfile Dockerfile \
+        --build-arg QITS_CLI_VERSION="$cli_version" \
         -o sbom.json

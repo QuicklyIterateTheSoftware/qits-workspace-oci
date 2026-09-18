@@ -354,7 +354,7 @@ RUN chmod 0755 /usr/local/bin/npm \
 # THE BINARY ARRIVES WITH THE BUILD CONTEXT; THIS FILE ONLY COPIES IT. That is the part worth
 # reading twice, because the obvious recipe — a `curl` here, like the Claude Code, Kimi and jdtls
 # layers above — cannot work. Those three dial the OPEN INTERNET, and buildkitd can reach it; this
-# one would have to dial the PLATFORM, and .config/qits/ci-event-release-request.yml says at length
+# one would have to dial the PLATFORM, and .config/qits/release.yml says at length
 # that this build dials nothing on the platform: it runs in buildkitd's namespace on qits-net, with
 # no commissioned credential and no platform address anywhere in the recipe. Fixing that here means
 # a build arg for the store's URL and a secret mount for the credential, and a deliberately hermetic
@@ -370,16 +370,46 @@ RUN chmod 0755 /usr/local/bin/npm \
 # QITS_COMMISSIONED_CLIENT_ID, QITS_COMMISSIONED_CLIENT_SECRET, QITS_GIT_AUTH_TOKEN_URL and
 # QITS_ARTIFACTS_URL into every step — so the STEP mints the bearer and fetches the file, and
 # `buildctl build --local context=.` sends it up with everything else. Both recipes carry that fetch,
-# byte for byte identical, exactly as their buildctl lines already are, and both scrape the version
-# out of the ARG below rather than restating it: one source of truth, so the pin and the fetch cannot
-# drift. (qits-ci-daemon's recipe reads its musl toolchain URLs out of a Dockerfile ARG the same way,
-# for the same reason.)
+# byte for byte identical, exactly as their buildctl lines already are.
+#
+# THE PIN IS NOT THIS LINE ANY MORE. It is a maven property — `qits.platform-access-cli-binary.version`
+# in this repository's `pom.xml`, on a dependency of `eu.wohlben.qits:qits-platform-access-cli-binary`
+# — and both recipes read it from there, fetch that version from the daemons store and pass it in as
+# `--opt build-arg:QITS_CLI_VERSION=`. The pom is the source of truth; the `ARG` below is how the
+# value reaches the build.
+#
+# THE DEFAULT ON THAT ARG IS A ONE-RELEASE SCAFFOLD AND IT GOES IN THE VERY NEXT COMMIT. It is here
+# because a release request cannot alter the CI that gates it: qits-ci discovers, parses and composes
+# `.config/qits/release.yml` at this repository's `main` head ALWAYS, and takes only the branch and
+# sha to check out from the fold — so the recipe that gates THIS tree is the one main carries today,
+# which still reads the version with `sed` off the `ARG QITS_CLI_VERSION=` line below. Without a
+# default that scrape returns nothing, the recipe's `: "${cli_version:?…}"` guard exits 1, and the
+# release request can never go green. (This exact file was bitten by this exact rule on 2026-09-14.)
+# So the recipe change lands first while it is INERT for the tree it builds, and the default is
+# carried one release longer, set to the SAME string the pom names so the two cannot disagree while
+# both exist. The next release is gated by the new recipe, and then the default is deleted and the
+# pom is the only statement.
+#
+# WHY IT MOVED OUT OF THIS FILE, since the `ARG` was the more obvious home and held it for months.
+# Nothing bumped it and nothing kept it alive. qits-platform-maintenance DOES read this Dockerfile —
+# its DockerParser walks ARG lines — but the ARG arm only records a value shaped like an image
+# reference, and a bare version has no slash in it; DockerParserTest says it outright, "a plain
+# version names no image". So the line was discarded before it was ever a pin, and no bump commit ever
+# touched it. Meanwhile the daemons store collects at `window=P0D` behind RELEASES_KEPT=2 and files
+# pins for maven, npm and docker only, so nothing held the pinned version back either: the second
+# qits-platform-access-cli release after a pin evicted it. The pin rotted on a clock, twice in three
+# days (10599c6, 2d2ddd6), each time as `curl: (22) ... 404` out of the recipe that prepares this
+# build's context. A maven property pin is both halves at once and needed no new machinery anywhere:
+# PomParser records it, the bump step's maven arm edits it on a maintenance/* branch, this
+# repository's release request gates the move, and the GC keeps the binary because a released maven
+# pin names it. pom.xml carries the argument in full. Ticket d0b1965f.
 #
 # PINNED INTO THE IMAGE, NOT DOWNLOADED AT CONTAINER START — the decision, and it matches ticket
 # ead74408's direction for CI: a container runs the version its image was built with, and it starts
 # with no download, no store to be reachable and no latest-version lookup to answer differently on
-# two consecutive container creations. Moving the pin is one `sed` on the single ARG line below, a
-# release of this repository, and the consuming images taking the new base.
+# two consecutive container creations. Moving the pin is one line in `pom.xml` and a release of this
+# repository, with the consuming images taking the new base — and in normal work nobody moves it by
+# hand at all, because the maintenance pipeline does.
 #
 # IT SITS AT THE FOOT OF THE FILE, NOT BESIDE ITS THREE ANCESTORS ABOVE, AND THAT IS DELIBERATE. A
 # `COPY` is cache-keyed on the file's content, so every layer BELOW it rebuilds when the pin moves.
@@ -389,9 +419,11 @@ RUN chmod 0755 /usr/local/bin/npm \
 # hits. Here, a bump costs one layer. The comment on the helper block above is the pointer that keeps
 # the two readable as one subject.
 #
-# A HAND-RUN `docker build` MUST FETCH THE FILE INTO THIS DIRECTORY FIRST — README.md gives the exact
-# curl, bearer and all. Without it the COPY fails outright, which is the right place to find out.
-ARG QITS_CLI_VERSION=2026.917.33816
+# A HAND-RUN `docker build` MUST FETCH THE FILE INTO THIS DIRECTORY FIRST AND SHOULD PASS THE ARG —
+# README.md gives the exact curl, bearer and `--build-arg` line. Without the file the COPY fails
+# outright, which is the right place to find out; without the arg the scaffold default below still
+# covers it, for one release.
+ARG QITS_CLI_VERSION=2026.918.142112
 COPY qits /usr/local/bin/qits
 RUN chmod 0755 /usr/local/bin/qits \
     # A download is the step that goes wrong QUIETLY: a truncated body, an error page the store
@@ -405,7 +437,7 @@ RUN chmod 0755 /usr/local/bin/qits \
     # binary the same day, zero bytes of output, and in this image's environment not even that (the
     # QUARKUS_ANALYTICS_DISABLED set above makes it emit one unrelated Quarkus warning instead). A
     # check against it would assert nothing at all, which is worse than no check because it reads
-    # like one. The ARG above is therefore the only statement of which version this image ships, and
+    # like one. The build arg is therefore the only statement of which version this image ships, and
     # recording it in a file is what makes it answerable from INSIDE a container: a LABEL needs a
     # docker daemon and a caller that knows its own container id, which is the same reasoning as
     # /etc/qits-renderer-provenance above.

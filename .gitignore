@@ -1,8 +1,12 @@
 # The qits CLI binary, fetched into the build context before `buildctl build` and COPYed by the
 # Dockerfile. It is NOT source: it is a released artifact of qits-platform-access-cli, ~42 MB of
-# native binary, and the only committed statement about it is the Dockerfile's one
-# `ARG QITS_CLI_VERSION=` line. Both CI recipes write it here, and so does anybody following
-# README.md's "Building by hand" — so without this line the next `git add -A` in a workspace quietly
-# stages 42 MB of downloaded binary into the history of an image recipe, under a name that would then
-# shadow the fetch on every later build.
+# native binary, and the only committed statement about it is `pom.xml`'s one
+# `<qits.platform-access-cli-binary.version>` line. Both CI recipes write it here, and so does anybody
+# following README.md's "Building by hand" — so without this line the next `git add -A` in a workspace
+# quietly stages 42 MB of downloaded binary into the history of an image recipe, under a name that
+# would then shadow the fetch on every later build.
 /qits
+
+# `./mvnw verify` resolves the CLI pin and writes an empty jar here. Nothing in it is an input to the
+# image; the maven step exists so that a pin naming a jar that does not resolve fails loudly.
+target/

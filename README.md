@@ -32,8 +32,9 @@ Dockerfiles already write.
 
 ### `qits` — the platform's own command line
 
-On PATH as `qits`, **pinned** at the version in the Dockerfile's `ARG QITS_CLI_VERSION` (also written
-to `/etc/qits-cli-version`, so a container can answer the question about itself). It is what an agent
+On PATH as `qits`, **pinned** at the version in `pom.xml`'s `qits.platform-access-cli-binary.version`
+property (also written to `/etc/qits-cli-version`, so a container can answer the question about
+itself; the Dockerfile takes it as a build arg with no default). It is what an agent
 should reach for first: projects and repositories, tickets, epics, release requests, CI runs and
 their logs, domain events, live telemetry, and `qits artifacts publish` from a CI step.
 
@@ -45,16 +46,32 @@ saying "not this identity", not a broken install.
 
 The version is pinned into the image rather than downloaded when a container starts, so a container
 always runs the version its image was built with and starts with no download and no store to be
-reachable. **Moving the pin** is: edit the one `ARG QITS_CLI_VERSION=` line in the `Dockerfile`,
-release this repository, and let the consuming images (`qits-workspace-daemon`, the editor and
-project-agent images) take the new base — the same path every other pin here travels.
+reachable.
+
+**The pin is an ordinary maven dependency**, and this repository has a `pom.xml` for no other reason
+— it publishes no jar and compiles nothing. The dependency is
+`eu.wohlben.qits:qits-platform-access-cli-binary` at the property
+`qits.platform-access-cli-binary.version`; that artifact is a handful of strings published by the
+same `qits-platform-access-cli` release that publishes the 42 MB binary, so its version *is* the
+daemons-store coordinate. qits-ci pins it the same way and spells the property identically.
+
+**Moving the pin** is therefore not something you do: qits-platform-maintenance bumps that line on a
+`maintenance/*` branch like any other internal pin, this repository's own release request gates the
+move, and the consuming images (`qits-workspace-daemon`, the editor and project-agent images) take
+the new base. That is the same path every other pin here travels, and it is the point — as an
+`ARG QITS_CLI_VERSION=` line the pin was bumped by nothing and kept alive in the store by nothing, so
+it rotted on a clock and killed the release pipeline with a 404 twice in three days. `pom.xml`'s
+comment and the `Dockerfile` block at the foot of the file carry the argument.
 
 The binary is **not fetched by the Dockerfile**. This build dials nothing on the platform, and the
 artifacts store is not anonymous, so the CI **step** container — which holds the commissioned pair
 and the store's address — fetches the file into the build context and the Dockerfile only `COPY`s it.
-Both recipes in `.config/qits/` carry that fetch, byte for byte identical, and both read the version
-out of the ARG rather than restating it. The `Dockerfile` block at the foot of the file has the full
-reasoning, including why it sits last.
+Both recipes in `.config/qits/release.yml` carry that fetch, byte for byte identical; both read the
+version out of the pom property and pass it to buildctl as `--opt build-arg:QITS_CLI_VERSION=`, and
+both run `./mvnw -B -ntp verify` first, which resolves the pinned jar and does nothing else — so a pin
+the maven registry no longer holds fails there, naming the coordinate, rather than as a bare 404 from
+the `curl` much later. The `Dockerfile` block at the foot of the file has the full reasoning,
+including why it sits last.
 
 ### Three shell helpers, older than the CLI and not retired by it
 
@@ -80,11 +97,18 @@ file the CI step puts there, and nothing inside the build can fetch it — the b
 platform credential and the recipe hands it no platform address. With a `qits-platform` bearer in
 `$token`:
 
-    version=$(sed -nE 's#^ARG QITS_CLI_VERSION=(.+)$#\1#p' Dockerfile)
+    version=$(sed -nE 's#^[[:space:]]*<qits\.platform-access-cli-binary\.version>(.+)</qits\.platform-access-cli-binary\.version>[[:space:]]*$#\1#p' pom.xml)
     curl -fsSL -H "Authorization: Bearer $token" \
       -o qits "$QITS_ARTIFACTS_URL/artifacts/daemons/qits-platform-access-cli/$version"
 
-    docker build -t qits/workspace-base:latest .
+    docker build --build-arg QITS_CLI_VERSION="$version" -t qits/workspace-base:latest .
+
+**Pass the `--build-arg`.** The pom is the one source of truth, and that is the same expression the
+recipes use — read with `sed` rather than with maven because the step image has no JDK in it. For
+this one release `ARG QITS_CLI_VERSION` still carries a default, set to the same string the pom
+names: qits-ci composes the recipe at `main`'s head always, so the recipe gating this tree is the
+previous one, which still scrapes that ARG line. The default goes in the next release and the arg
+becomes mandatory.
 
 That download URL answered 200 without a token when it was last measured (2026-09-14) and its
 neighbour — the daemon list API — answered 401, so send the bearer and do not build a habit on the

@@ -1,3 +1,11 @@
 .git
 .config
 README.md
+# The maven reactor, which exists to pin the qits CLI version and is read by the CI recipes before
+# buildctl runs — never by the build. The Dockerfile takes the version as a build arg.
+pom.xml
+mvnw
+mvnw.cmd
+.mvn
+.qits-maven-settings.xml
+target

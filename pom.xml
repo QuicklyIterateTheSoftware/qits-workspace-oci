@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- A MAVEN REACTOR IN AN IMAGE REPOSITORY THAT PUBLISHES NO JAR, which is the shape
+         qits-workspace-editor-oci has, inverted. That repository grew a pom so it could PUBLISH one
+         tiny jar whose version is its image tag; this one grew a pom so it can DEPEND on one — and
+         it publishes nothing from maven at all. The whole product of this file is a single
+         `<version>` line that the platform's maintenance pipeline knows how to move and the
+         platform's garbage collector knows how to hold back.
+
+         WHY A POM AND NOT THE `ARG` THAT WAS HERE. The qits CLI binary used to be pinned as
+         `ARG QITS_CLI_VERSION=<version>` in the Dockerfile, scraped out of that line by both
+         release recipes. Nothing bumped it and nothing kept it alive:
+
+           - qits-platform-maintenance DOES read the Dockerfile — its DockerParser walks ARG lines —
+             but the ARG arm only records a value shaped like an image reference, and a bare version
+             has no slash in it. DockerParserTest says so outright: "a plain version names no image".
+             The line was discarded before it was ever a pin, and no bump commit ever touched it.
+           - The daemons store collects at `window=P0D` behind RELEASES_KEPT=2, and its GC files pins
+             for maven, npm and docker only. A version no recognised pin source names is evicted by
+             the second qits-platform-access-cli release after it.
+
+         So the pin rotted on a clock, and the failure landed on the release pipeline as
+         `curl: (22) The requested URL returned error: 404` out of the context-preparation step. It
+         was hand-fixed twice in three days (10599c6 on 2026-09-16, 2d2ddd6 on 2026-09-17), and the
+         second of those commits states the finding in full.
+
+         A MAVEN PROPERTY PIN IS BOTH HALVES AT ONCE, with no new machinery anywhere: PomParser
+         records `property:qits.platform-access-cli-binary.version`, the maven arm of the bump step
+         edits it on a maintenance/* branch, this repository's own release request gates the move,
+         and the store's GC holds the version back because a released maven pin names it. Ticket
+         d0b1965f.
+
+         ONE MODULE, AND ITS OWN COORDINATE IS NOT PUBLISHED BY ANYTHING. No release step here runs
+         `deploy`, nothing depends on `eu.wohlben.qits:qits-workspace-base-image`, and the version
+         below is never stamped by a release — it is an identity maven insists on having, not a
+         coordinate anybody resolves. Do not build a consumer on it; the thing this repository
+         publishes is the image `qits/workspace-base`, and the way to learn which CLI it carries is
+         `/etc/qits-cli-version` inside a container.
+
+         A CLONE OF THIS REPO ALONE MUST BUILD — but unlike the editor's pom, this one genuinely
+         needs the platform's maven registry, because the one dependency below lives there and
+         nowhere else. `./mvnw -B -ntp verify` resolves that jar and does nothing else useful: there
+         is no source tree, no test, and no output. Resolution IS the check, and it is the point —
+         see the comment on the property. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-workspace-base-image</artifactId>
+    <version>1-local</version>
+    <packaging>jar</packaging>
+    <name>qits-workspace-base-image</name>
+    <description>The qits CLI pin of the qits/workspace-base image. Not published.</description>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <!-- THE qits CLI PIN, AND IT IS THE ONLY REASON THIS FILE EXISTS. This artifact's version IS
+             the daemons-store coordinate of the `qits` binary: the same qits-platform-access-cli
+             release publishes both, under one string. Both release recipes read THIS LINE out of
+             this file and fetch
+             `$QITS_ARTIFACTS_URL/artifacts/daemons/qits-platform-access-cli/<it>` into the build
+             context, and the Dockerfile COPYs the result to /usr/local/bin/qits. Every agent
+             container on the platform — workspace, editor, project-agent — is built FROM this image,
+             so this line decides which qits CLI they all run.
+
+             THE PROPERTY NAME IS A CONTRACT, spelled exactly as qits-ci-service's root pom spells it
+             (see the long comment there), so the pin reads identically in both trees and one bump
+             rule covers both. Renaming it here does not break a build; it quietly detaches the line
+             from the pipeline that moves it, which is precisely the failure this file was written to
+             end.
+
+             Do not hand-edit it to chase a CLI release. qits-platform-maintenance moves it like any
+             internal pin, on a maintenance/* branch, and this repository's own release request gates
+             the move. A hand-written pin asserts a version nobody gated, and the next bump
+             overwrites it regardless. -->
+        <qits.platform-access-cli-binary.version>2026.918.142112</qits.platform-access-cli-binary.version>
+        <!-- Where this resolves the platform's own artifacts. The settings file mirrors this
+             repository id onto the in-network address inside a CI step; a declared repository is what
+             gives it something to mirror. -->
+        <qits.maven.repository.url>http://registry.dev.localhost:8080/artifacts/maven/maven</qits.maven.repository.url>
+    </properties>
+
+    <repositories>
+        <repository>
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <dependency>
+            <!-- THREE STRINGS AND NO BYTES OF THE BINARY: the daemons-store name, the command name,
+                 and the version the same release published the 42 MB binary under. Nothing here
+                 compiles against it and nothing here ships it — the jar is never opened. It is
+                 declared because a DECLARED DEPENDENCY IS THE MECHANISM: it is what PomParser records
+                 as a pin, what the bump step's maven arm edits, what the store's GC refuses to
+                 collect, and what `./mvnw verify` has to RESOLVE before this repository can gate.
+                 A pin naming a version the registry no longer holds now fails in a maven step with
+                 the coordinate printed, rather than 25 seconds into a buildctl context prep as a
+                 bare `curl: (22) ... 404`. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-platform-access-cli-binary</artifactId>
+            <version>${qits.platform-access-cli-binary.version}</version>
+        </dependency>
+    </dependencies>
+</project>
