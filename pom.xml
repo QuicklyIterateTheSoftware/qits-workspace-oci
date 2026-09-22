@@ -48,7 +48,7 @@
          see the comment on the property. -->
     <groupId>eu.wohlben.qits</groupId>
     <artifactId>qits-workspace-base-image</artifactId>
-    <version>2026.922.150145</version>
+    <version>2026.922.183434</version>
     <packaging>jar</packaging>
     <name>qits-workspace-base-image</name>
     <description>The qits CLI pin of the qits/workspace-base image. Not published.</description>
