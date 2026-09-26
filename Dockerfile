@@ -219,7 +219,7 @@ RUN { echo "playwright=${PLAYWRIGHT_VERSION}"; \
 # (claude.ai/install.sh) downloads the standalone binary into ~/.local/bin; we relocate it to
 # /usr/local/bin so it's on PATH for the arbitrary runtime uid the container runs as. Auto-updates
 # are disabled (immutable image — bump the ARG to upgrade).
-ARG CLAUDE_CODE_VERSION=2.1.226
+ARG CLAUDE_CODE_VERSION=2.1.283
 RUN curl -fsSL https://claude.ai/install.sh | bash -s ${CLAUDE_CODE_VERSION} \
     && cp -L /root/.local/bin/claude /usr/local/bin/claude \
     && rm -rf /root/.local/bin/claude /root/.local/share/claude /root/.claude
