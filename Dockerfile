@@ -332,9 +332,16 @@ RUN chmod 0644 /etc/qits/maven-settings.xml /etc/profile.d/qits-workspace.sh \
 # spawns it straight from the Maven JVM, so a shell function or alias would miss exactly the builds
 # that matter most. The shim execs the real binary and adds nothing when the platform has told us no
 # registry.
+#
+# It also carries the npm mirror's credential: npm_config_registry names the mirror through the
+# public edge (https), which wants the container's commissioned client pair as HTTP Basic, and npm's
+# per-registry `//<host><path>/:_auth` key is the same non-exportable kind of name as the scope's.
 COPY qits-npm-shim.sh /usr/local/bin/npm
 RUN chmod 0755 /usr/local/bin/npm \
     && bash -n /usr/local/bin/npm \
+    # The credential is base64-encoded in the shim; coreutils is essential on Debian, but a shim that
+    # silently sends an empty `_auth` is a 401 far from its cause, so assert the tool is there.
+    && command -v base64 >/dev/null \
     # The shim must sit AHEAD of the real npm, not behind it: if PATH ever puts /usr/bin first this
     # silently stops applying, and a workspace goes back to resolving @qits from the public
     # registry. Assert the resolution at build time rather than discovering it in a build log.

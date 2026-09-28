@@ -30,7 +30,7 @@ fi
 proxy=${npm_config_registry:-}
 hosted=${QITS_WORKSPACE_NPM_REGISTRY_URL:-}
 if [ -z "$proxy" ] || [ -z "$hosted" ]; then
-  exec npm ci "$@"
+  exec npm ci "$@" # the shim, and its mirror credential, apply here too
 fi
 origin_of() { printf '%s' "$1" | sed -E 's#^(https?://[^/]+).*#\1#'; }
 path_of() { printf '%s' "$1" | sed -E 's#^https?://[^/]+##'; }
@@ -45,5 +45,6 @@ sed -i -E \
   -e "s#(\"resolved\": \")https?://[^/\"]+#\\1$proxy_origin#" \
   -e "s#(\"resolved\": \")https?://[^/\"]+($hosted_path)#\\1$hosted_origin\\2#" \
   "$lock"
-# `npm` resolves to the shim ahead of the real binary, which is what carries the @qits scope.
+# `npm` resolves to the shim ahead of the real binary, which is what carries the @qits scope and
+# the edge mirror's `_auth` — the swapped tarball URLs sit under the registry's path, so they get it.
 npm ci "$@"

@@ -85,7 +85,11 @@ All inert until qits-workspaces injects the environment they read:
   alias.
 - `qits-npm-ci [args]` — `npm ci` with the lockfile's developer-host `resolved` origins swapped for
   the platform's registries for the duration of the install and restored byte for byte afterwards.
-  `npm` itself is a shim that carries the `@qits` scope (see the Dockerfile).
+  `npm` itself is a shim that carries the `@qits` scope and, when `npm_config_registry` is an
+  `https` address (the npm mirror through the public edge, `https://mirror.qits.<domain>/npm/npmjs/`),
+  that registry's `_auth` from the container's commissioned client pair — the edge accepts it as
+  HTTP Basic. `qits-npm-ci` installs through the same shim, so it is authenticated too (see the
+  shim's header).
 
 Plus `/etc/profile.d/qits-workspace.sh` for every login shell: a passwd entry for the arbitrary uid
 and the Maven settings that reach the platform's plain-http repository.
