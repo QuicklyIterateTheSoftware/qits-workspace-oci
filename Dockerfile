@@ -257,9 +257,14 @@ RUN npm install -g typescript-language-server typescript
 # recipe; `bin/jdtls` presence is asserted so a structure change fails the build loudly rather than
 # at agent runtime.
 ARG JDTLS_URL=https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz
+# `--no-same-owner`: every entry in Eclipse's tarball is owned by 1001380000:1001380000 (their
+# OpenShift build host), which is outside a rootless/user-namespaced docker's id map — buildkitd on
+# such a runner fails the extract with "failed to Lchown ... (Hint: try increasing the number of
+# subordinate IDs in /etc/subuid and /etc/subgid)". There is no host-side fix for that; the image
+# just must not produce files above the mappable range in the first place (qits-556).
 RUN mkdir -p /opt/jdtls \
     && curl -fsSL "${JDTLS_URL}" -o /tmp/jdtls.tar.gz \
-    && tar -xz -C /opt/jdtls -f /tmp/jdtls.tar.gz \
+    && tar -xz --no-same-owner -C /opt/jdtls -f /tmp/jdtls.tar.gz \
     && rm -f /tmp/jdtls.tar.gz \
     && test -f /opt/jdtls/bin/jdtls \
     && ln -s /opt/jdtls/bin/jdtls /usr/local/bin/jdtls
@@ -449,3 +454,18 @@ RUN chmod 0755 /usr/local/bin/qits \
          exit 1; }; } \
     && /usr/local/bin/qits --help >/dev/null \
     && echo "qits=${QITS_CLI_VERSION}" > /etc/qits-cli-version
+
+# Guard of last resort, run last so it sees every layer above: fail the build if anything on the
+# image landed owned by a uid or gid above 65535 — the jdtls extraction above is fixed with
+# `--no-same-owner`, but a future upstream tarball (or anything added later in this file) could
+# reintroduce the same shape. A CI runner whose docker lives in a user namespace cannot map such an
+# id and fails to even mount the image (qits-556); catching it here fails THIS build's own gate
+# instead of every consumer's, on whatever runner happens to build them. `-xdev` stays within this
+# image's one filesystem (no bind mounts are active at build time, so there is nothing else to
+# cross into) and so never descends into /proc or /sys, which are not part of the image anyway.
+RUN bad="$(find / -xdev \( -uid +65535 -o -gid +65535 \) -print 2>/dev/null | head -20)"; \
+    if [ -n "$bad" ]; then \
+        echo "Files owned by an id above 65535 (a CI runner in a user namespace cannot map them - qits-556):" >&2; \
+        echo "$bad" >&2; \
+        exit 1; \
+    fi
