@@ -33,9 +33,16 @@ release-request:
   - image: qits/build-images/maven-base:latest
     timeout-seconds: 1800
     script: |
+      # The commissioned pair where there is one (INTERNAL); otherwise what qits-ci already put in
+      # QITS_MAVEN_AUTH_USR/PSW — the run's token subject and token on the EDGE plane (qits-443),
+      # which the bare `${QITS_COMMISSIONED_CLIENT_ID-}` used to overwrite with an empty string,
+      # a 401 from the public mirror on the first Central artifact. The comment sits above the whole
+      # assignment chain, not inside it: a `#` line spliced between two backslash-continued
+      # `VAR=val \` assignments detaches everything above it into a bare, unexported shell variable
+      # that never reaches mvnw's environment — measured with `env -i sh -x`.
       QITS_MAVEN_CENTRAL_URL="${QITS_MAVEN_PROXY_URL:-}" \
-      QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID-}" \
-      QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET-}" \
+      QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID:-${QITS_MAVEN_AUTH_USR-}}" \
+      QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET:-${QITS_MAVEN_AUTH_PSW-}}" \
       ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
         -Dqits.maven.repository.url="$QITS_MAVEN_REGISTRY_URL"
 
@@ -52,16 +59,25 @@ release-request:
       cli_version=$(sed -nE 's#^[[:space:]]*<qits\.platform-access-cli-binary\.version>(.+)</qits\.platform-access-cli-binary\.version>[[:space:]]*$#\1#p' pom.xml)
       : "${cli_version:?pom.xml declares no <qits.platform-access-cli-binary.version> property; the image pins no qits CLI}"
       : "${QITS_ARTIFACTS_URL:?the artifacts store address is not injected}"
-      : "${QITS_COMMISSIONED_CLIENT_ID:?no commissioned client id}"
-      : "${QITS_COMMISSIONED_CLIENT_SECRET:?no commissioned client secret}"
-      : "${QITS_GIT_AUTH_TOKEN_URL:?no idp token endpoint injected}"
-      cli_token=$(curl -fsS --connect-timeout 5 --max-time 30 \
-        -u "$QITS_COMMISSIONED_CLIENT_ID:$QITS_COMMISSIONED_CLIENT_SECRET" \
-        -H 'Content-Type: application/x-www-form-urlencoded' \
-        --data "grant_type=client_credentials&audience=qits-platform" \
-        "$QITS_GIT_AUTH_TOKEN_URL" \
-        | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-      : "${cli_token:?the idp minted no qits-platform bearer for the commissioned client}"
+      # THE BEARER IS THE RUN'S OWN TOKEN ON THE EDGE PLANE (qits-443), not a mint: qits-ci sets
+      # $QITS_TOKEN there and nothing else, so requiring the commissioned pair unconditionally — as
+      # this step used to, with a bare `${QITS_COMMISSIONED_CLIENT_ID:?}` — failed every EDGE run
+      # before it ever reached the idp. On the INTERNAL plane $QITS_TOKEN is unset and the
+      # commissioned pair mints one, exactly as before.
+      if [ -n "${QITS_TOKEN:-}" ]; then
+        cli_token="$QITS_TOKEN"
+      else
+        : "${QITS_COMMISSIONED_CLIENT_ID:?no commissioned client id}"
+        : "${QITS_COMMISSIONED_CLIENT_SECRET:?no commissioned client secret}"
+        : "${QITS_GIT_AUTH_TOKEN_URL:?no idp token endpoint injected}"
+        cli_token=$(curl -fsS --connect-timeout 5 --max-time 30 \
+          -u "$QITS_COMMISSIONED_CLIENT_ID:$QITS_COMMISSIONED_CLIENT_SECRET" \
+          -H 'Content-Type: application/x-www-form-urlencoded' \
+          --data "grant_type=client_credentials&audience=qits-platform" \
+          "$QITS_GIT_AUTH_TOKEN_URL" \
+          | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+        : "${cli_token:?the idp minted no qits-platform bearer for the commissioned client}"
+      fi
       # THE FILE IS CALLED `qits` BECAUSE THAT IS WHAT THE DOCKERFILE COPIES AND WHAT THE IMAGE PUTS
       # ON $PATH. The ARTIFACT it comes from is `qits-platform-access-cli`; the two names differ on
       # purpose and neither may be changed here. The VERSION is the third name for one thing: the
@@ -79,9 +95,14 @@ release:
   - image: qits/build-images/maven-base:latest
     timeout-seconds: 1800
     script: |
+      # The commissioned pair where there is one (INTERNAL); otherwise what qits-ci already put in
+      # QITS_MAVEN_AUTH_USR/PSW — the run's token subject and token on the EDGE plane (qits-443),
+      # which the bare `${QITS_COMMISSIONED_CLIENT_ID-}` used to overwrite with an empty string,
+      # a 401 from the public mirror on the first Central artifact. Comment above the whole
+      # assignment chain, not inside it — see the release-request slot's maven step for why.
       QITS_MAVEN_CENTRAL_URL="${QITS_MAVEN_PROXY_URL:-}" \
-      QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID-}" \
-      QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET-}" \
+      QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID:-${QITS_MAVEN_AUTH_USR-}}" \
+      QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET:-${QITS_MAVEN_AUTH_PSW-}}" \
       ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
         -Dqits.maven.repository.url="$QITS_MAVEN_REGISTRY_URL"
 
@@ -92,16 +113,25 @@ release:
       cli_version=$(sed -nE 's#^[[:space:]]*<qits\.platform-access-cli-binary\.version>(.+)</qits\.platform-access-cli-binary\.version>[[:space:]]*$#\1#p' pom.xml)
       : "${cli_version:?pom.xml declares no <qits.platform-access-cli-binary.version> property; the image pins no qits CLI}"
       : "${QITS_ARTIFACTS_URL:?the artifacts store address is not injected}"
-      : "${QITS_COMMISSIONED_CLIENT_ID:?no commissioned client id}"
-      : "${QITS_COMMISSIONED_CLIENT_SECRET:?no commissioned client secret}"
-      : "${QITS_GIT_AUTH_TOKEN_URL:?no idp token endpoint injected}"
-      cli_token=$(curl -fsS --connect-timeout 5 --max-time 30 \
-        -u "$QITS_COMMISSIONED_CLIENT_ID:$QITS_COMMISSIONED_CLIENT_SECRET" \
-        -H 'Content-Type: application/x-www-form-urlencoded' \
-        --data "grant_type=client_credentials&audience=qits-platform" \
-        "$QITS_GIT_AUTH_TOKEN_URL" \
-        | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-      : "${cli_token:?the idp minted no qits-platform bearer for the commissioned client}"
+      # THE BEARER IS THE RUN'S OWN TOKEN ON THE EDGE PLANE (qits-443), not a mint: qits-ci sets
+      # $QITS_TOKEN there and nothing else, so requiring the commissioned pair unconditionally — as
+      # this step used to, with a bare `${QITS_COMMISSIONED_CLIENT_ID:?}` — failed every EDGE run
+      # before it ever reached the idp. On the INTERNAL plane $QITS_TOKEN is unset and the
+      # commissioned pair mints one, exactly as before.
+      if [ -n "${QITS_TOKEN:-}" ]; then
+        cli_token="$QITS_TOKEN"
+      else
+        : "${QITS_COMMISSIONED_CLIENT_ID:?no commissioned client id}"
+        : "${QITS_COMMISSIONED_CLIENT_SECRET:?no commissioned client secret}"
+        : "${QITS_GIT_AUTH_TOKEN_URL:?no idp token endpoint injected}"
+        cli_token=$(curl -fsS --connect-timeout 5 --max-time 30 \
+          -u "$QITS_COMMISSIONED_CLIENT_ID:$QITS_COMMISSIONED_CLIENT_SECRET" \
+          -H 'Content-Type: application/x-www-form-urlencoded' \
+          --data "grant_type=client_credentials&audience=qits-platform" \
+          "$QITS_GIT_AUTH_TOKEN_URL" \
+          | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+        : "${cli_token:?the idp minted no qits-platform bearer for the commissioned client}"
+      fi
       curl -fsSL --retry 2 --retry-delay 2 -H "Authorization: Bearer $cli_token" \
         -o qits "$QITS_ARTIFACTS_URL/artifacts/daemons/qits-platform-access-cli/$cli_version"
       [ -s qits ] || { echo "the qits CLI download is empty" >&2; exit 1; }
