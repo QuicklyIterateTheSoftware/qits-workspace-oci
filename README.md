@@ -13,6 +13,12 @@ Node and the screenshot renderer (Playwright Chromium and the fonts) come from t
 browser screenshot tests on that same image, so baselines regenerated in a workspace match CI. Change
 the renderer there, never here.
 
+The coding agent also gets a browser it drives: `qits-browser-mcp` starts Microsoft's Playwright MCP
+server (`@playwright/mcp`, `PLAYWRIGHT_MCP_VERSION`) headless on the base's Chromium, with an
+in-memory profile and its files under `/tmp/playwright-mcp`. qits-workspace-daemon attaches it to
+every Claude launch as the MCP server `browser`. The build fails when `PLAYWRIGHT_MCP_VERSION` is
+built on another Playwright major.minor than the base bakes.
+
 The docker CLI is the one that looks alarming and is not: it is `docker-ce-cli` alone — no daemon,
 no socket — and a workspace container reaches nothing with it unless it was created in **admin
 mode**, the per-workspace posture that makes qits-containers bind the host's socket into it. In

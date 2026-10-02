@@ -1,0 +1,36 @@
+#!/bin/sh
+# qits-browser-mcp — the browser a workspace's coding agent drives, as a stdio MCP server.
+#
+# qits-workspace-daemon attaches this command to every Claude launch under the key `browser`
+# (LocalMcp in qits-coding-agents). The daemon only names the program; everything about the
+# browser lives here, beside the image that ships it:
+#
+#   --executable-path  the Playwright Chromium the base image bakes for screenshot tests, so there
+#                      is one browser and one pin (`playwright=` in /etc/qits-renderer-provenance).
+#                      @playwright/mcp is built on a Playwright alpha of its own, whose Chromium
+#                      revision is not the one baked here; naming the binary keeps it from looking
+#                      for (or downloading) a second browser.
+#   --headless         no display in a workspace container.
+#   --isolated         the profile lives in memory: the container runs as an arbitrary uid, and a
+#                      session must not inherit another session's cookies or storage.
+#   --no-sandbox       containers run with --cap-drop=ALL, where Chromium's own sandbox cannot start.
+#   --output-dir       screenshots and traces go to /tmp, never into the checkout under /workspace,
+#                      where they would show up as changes the agent did not make.
+set -eu
+browsers="${PLAYWRIGHT_BROWSERS_PATH:-/opt/ms-playwright}"
+chrome=""
+for candidate in "$browsers"/chromium-[0-9]*/chrome-linux*/chrome; do
+  [ -x "$candidate" ] && chrome="$candidate" && break
+done
+if [ -z "$chrome" ]; then
+  echo "qits-browser-mcp: no Chromium under $browsers; this image is broken, rebuild it" >&2
+  exit 1
+fi
+exec playwright-mcp \
+  --browser chromium \
+  --executable-path "$chrome" \
+  --headless \
+  --isolated \
+  --no-sandbox \
+  --output-dir "${TMPDIR:-/tmp}/playwright-mcp" \
+  "$@"

@@ -2,7 +2,8 @@
 #
 # It carries what a workspace container needs to work on a checkout: git and a shell toolchain,
 # JDK 25, node + pnpm, python, a pinned Playwright Chromium with a pinned font stack, the coding
-# agent CLIs (Claude Code, Kimi Code), and language servers (jdtls, typescript-language-server).
+# agent CLIs (Claude Code, Kimi Code), a browser MCP server the agent drives (`qits-browser-mcp`),
+# and language servers (jdtls, typescript-language-server).
 #
 # It carries NO daemon binary and no entrypoint. It is a base, not a runnable workspace.
 # `qits-workspace-daemon`'s `docker/Dockerfile.workspace` layers the daemon on top of this image and
@@ -174,6 +175,32 @@ RUN install -d -m 0755 /etc/apt/keyrings \
 RUN test -n "${PLAYWRIGHT_BROWSERS_PATH}" \
     && grep -q '^chromium=' /etc/qits-renderer-provenance \
     && cat /etc/qits-renderer-provenance
+
+# ---- A browser the coding agent can drive ----------------------------------------------------
+# Microsoft's Playwright MCP server, so a coding agent can open what it serves (`ng serve`, a
+# Quarkus dev server), click through it, take screenshots and read the console and network.
+# qits-workspace-daemon attaches `qits-browser-mcp` to every Claude launch as the stdio MCP server
+# `browser`; that script holds the flags and points the server at the base's Chromium, so this layer
+# adds no second browser.
+#
+# THE PLAYWRIGHT PIN STAYS ONE PIN: the base's, recorded as `playwright=` in
+# /etc/qits-renderer-provenance. @playwright/mcp is built on a Playwright alpha of its own, so its
+# version cannot be that pin; PLAYWRIGHT_MCP_VERSION names the release built on the same
+# major.minor, and the check below fails the build when the base moves to another one. When it
+# does, pick the @playwright/mcp release whose `playwright` dependency has the new major.minor.
+# npm-global for the same reason as the language servers below: it lands in /usr/bin for the
+# arbitrary runtime uid.
+ARG PLAYWRIGHT_MCP_VERSION=0.0.80
+RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
+    && rm -rf /root/.npm \
+    && base="$(sed -n 's/^playwright=\([0-9]*\.[0-9]*\).*/\1/p' /etc/qits-renderer-provenance)" \
+    && mcp="$(node -p "require('$(npm root -g)/@playwright/mcp/node_modules/playwright-core/package.json').version" | cut -d. -f1,2)" \
+    && { [ -n "$base" ] && [ "$base" = "$mcp" ] || { \
+         echo "@playwright/mcp ${PLAYWRIGHT_MCP_VERSION} is built on Playwright $mcp, the base bakes $base: pick the release on $base" >&2; \
+         exit 1; }; } \
+    && playwright-mcp --help >/dev/null
+COPY qits-browser-mcp /usr/local/bin/qits-browser-mcp
+RUN chmod 0755 /usr/local/bin/qits-browser-mcp && sh -n /usr/local/bin/qits-browser-mcp
 
 # The coding agent (Claude Code) runs inside this container — the single biggest executor of
 # arbitrary commands in the sandbox. Bake the CLI in at a pinned version (bump CLAUDE_CODE_VERSION
