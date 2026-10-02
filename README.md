@@ -8,6 +8,11 @@ CLIs (Claude Code, Kimi Code), language servers (jdtls, typescript-language-serv
 **client**. Every package is commented in the `Dockerfile` with the reason it is there. Read that
 before changing anything.
 
+Node and the screenshot renderer (Playwright Chromium and the fonts) come from the base image,
+`qits/build-images/node-browser-base`, pinned in the `BROWSER_BASE` line. CI's `app` QA step runs
+browser screenshot tests on that same image, so baselines regenerated in a workspace match CI. Change
+the renderer there, never here.
+
 The docker CLI is the one that looks alarming and is not: it is `docker-ce-cli` alone — no daemon,
 no socket — and a workspace container reaches nothing with it unless it was created in **admin
 mode**, the per-workspace posture that makes qits-containers bind the host's socket into it. In

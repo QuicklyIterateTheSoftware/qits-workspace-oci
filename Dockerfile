@@ -14,7 +14,19 @@
 # is unchanged apart from dropping ` AS workspace` from the `FROM` — the stage is the whole image
 # now. Keep it that way: every pinned version here is a deliberate pin, and the comments explain
 # why each package is installed.
-FROM debian:bookworm-slim
+
+# ---- the base: node and the screenshot renderer ---------------------------------------------
+# `qits/build-images/node-browser-base` (qits-build-images-oci) is Debian bookworm with Node 24,
+# Playwright's Chromium at a pinned version and a pinned font stack, recorded in
+# /etc/qits-renderer-provenance. The `app` archetype's CI QA step runs `npm run test:browser` on the
+# SAME image, so screenshot baselines an agent regenerates here match CI byte for byte. That is why
+# the renderer is not installed in this file: one definition, two consumers.
+#
+# ONE LINE, ONE VERSION TOKEN, AND A MACHINE EDITS IT: qits-maintenance reads literal
+# `ARG <NAME>=<image>:<tag>` defaults as docker pins and bumps the tag. Keep the value literal. The
+# registry host is the builder's to resolve (its registry config maps the edge spelling in-network).
+ARG BROWSER_BASE=registry.dev.localhost:8080/qits/build-images/node-browser-base:2026.1002.170951
+FROM ${BROWSER_BASE}
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -120,12 +132,8 @@ ENV QUARKUS_ANALYTICS_DISABLED=true
 # disables it non-interactively for every Angular build (Quinoa's frontend build + fixture builds).
 ENV NG_CLI_ANALYTICS=false
 
-# Node.js (via NodeSource) + pnpm through corepack.
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && corepack enable \
-    && corepack prepare pnpm@latest --activate \
-    && rm -rf /var/lib/apt/lists/*
+# Node.js comes from the base (NodeSource, Node 24, corepack enabled); pnpm through corepack.
+RUN corepack prepare pnpm@latest --activate
 
 # ---- The docker CLI, for admin workspaces ---------------------------------------------------
 # THE CLIENT ONLY, AND IT REACHES NOTHING BY ITSELF. `docker-ce-cli` is the `docker` command and
@@ -159,57 +167,11 @@ RUN install -d -m 0755 /etc/apt/keyrings \
     && [ -x /usr/bin/docker ] \
     && ! command -v dockerd
 
-# ---- Screenshot-test renderer: pinned fonts + Playwright Chromium ---------------------------
-# The visual baselines committed under the consuming SPA's source tree (__screenshots__/*.png) are only
-# reproducible on the exact Chromium build AND font stack that rendered them, so both are baked
-# into this image, which is the sole sanctioned producer of baselines — see
-# the retired monolith's docs/epics/qits-build-setup/features/2026-07-13_screenshot-baseline-renderer-baked-into-image.md and the
-# screenshot-tests skill. Fonts first, in their own layer (they essentially never change; the
-# browser layer below changes on playwright bumps): fontconfig + DejaVu (Chromium's default Linux
-# sans-serif fallback), Liberation (metric-compatible Arial/Helvetica/Times), Noto core + color
-# emoji (broad Unicode/emoji fallback, so a stray glyph rasterizes identically everywhere instead
-# of from a host font).
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        fontconfig \
-        fonts-dejavu-core \
-        fonts-liberation \
-        fonts-noto-core \
-        fonts-noto-color-emoji \
-    && rm -rf /var/lib/apt/lists/*
-
-# The Playwright-managed Chromium, keyed to the playwright version the frontend lockfile resolves —
-# PLAYWRIGHT_VERSION MUST match the consuming SPA's lockfile (grep "playwright@" there).
-# Bump both together, rebuild this image, and re-record the baselines: that pairing is the
-# intended, reviewable re-record event. A lockfile bump without an image rebuild fails loudly at
-# test time with "Executable doesn't exist at /opt/ms-playwright/…" — that error means "rebuild
-# this image", never "playwright install locally". Installed to a FIXED path via
-# PLAYWRIGHT_BROWSERS_PATH rather than the default ~/.cache/ms-playwright, because workspace
-# containers run as an arbitrary uid with HOME=/workspace and the devcontainer as `dev` with
-# HOME=/home/dev — a per-HOME cache would be invisible to both. npx (not pnpm) because no
-# package.json exists at image build time; --with-deps apt-installs Chromium's shared-library and
-# supplemental font dependencies (it shells apt-get install, so the apt lists must be refreshed
-# first in the same layer).
-ARG PLAYWRIGHT_VERSION=1.61.0
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
-RUN apt-get update \
-    && npx -y playwright@${PLAYWRIGHT_VERSION} install --with-deps chromium \
-    && chmod -R a+rX ${PLAYWRIGHT_BROWSERS_PATH} \
-    && rm -rf /root/.npm /var/lib/apt/lists/*
-
-# Renderer provenance, greppable from inside any container (a LABEL is readable only through a
-# docker daemon, by a caller that knows its own container id — the CLI above is inert in every
-# workspace but an admin one — so a file beats a LABEL): the exact Chromium build plus every baked
-# font package — including
-# the supplemental fonts --with-deps pulled in, hence the 'fonts-*' glob rather than the five named
-# above (grep -v drops known-but-not-installed packages the glob also matches). The trailing grep
-# asserts the chromium line made it in, so a browser-layout change (the chrome-linux64 path is
-# playwright-version-specific) fails the build loudly instead of leaving provenance silently
-# incomplete. The screenshot-tests skill's baseline-provenance note points here.
-RUN { echo "playwright=${PLAYWRIGHT_VERSION}"; \
-      ${PLAYWRIGHT_BROWSERS_PATH}/chromium-*/chrome-linux*/chrome --version | sed 's/^/chromium=/'; \
-      dpkg-query -W -f='${Package}=${Version}\n' fontconfig 'fonts-*' | grep -v '=$'; \
-    } > /etc/qits-renderer-provenance \
+# ---- Screenshot-test renderer ----------------------------------------------------------------
+# Inherited from the base (see the top of this file): Playwright's Chromium under
+# PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright, the pinned fonts, and /etc/qits-renderer-provenance.
+# Check here that the base still carries them, so a base without a renderer fails this build.
+RUN test -n "${PLAYWRIGHT_BROWSERS_PATH}" \
     && grep -q '^chromium=' /etc/qits-renderer-provenance \
     && cat /etc/qits-renderer-provenance
 
