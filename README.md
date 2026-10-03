@@ -84,9 +84,9 @@ the maven registry no longer holds fails there, naming the coordinate, rather th
 the `curl` much later. The `Dockerfile` block at the foot of the file has the full reasoning,
 including why it sits last.
 
-### Three shell helpers, older than the CLI and not retired by it
+### Two shell helpers, older than the CLI and not retired by it
 
-All inert until qits-workspaces injects the environment they read:
+Both inert until qits-workspaces injects the environment they read:
 
 - `qits-git-credential` — git's credential helper, answering the injected githost authority with a
   short-lived bearer minted from the container's commissioned client (and nothing else: a checkout
@@ -94,16 +94,21 @@ All inert until qits-workspaces injects the environment they read:
 - `qits-token <audience>` — the same mint, for the hands that are not git: qits-projects' release
   requests, the ci run list, any platform API. One token per service, the audience is that service's
   alias.
-- `qits-npm-ci [args]` — `npm ci` with the lockfile's developer-host `resolved` origins swapped for
-  the platform's registries for the duration of the install and restored byte for byte afterwards.
-  `npm` itself is a shim that carries the `@qits` scope and, when `npm_config_registry` is an
-  `https` address (the npm mirror through the public edge, `https://mirror.qits.<domain>/npm/npmjs/`),
-  that registry's `_auth` from the container's commissioned client pair — the edge accepts it as
-  HTTP Basic. `qits-npm-ci` installs through the same shim, so it is authenticated too (see the
-  shim's header).
 
-Plus `/etc/profile.d/qits-workspace.sh` for every login shell: a passwd entry for the arbitrary uid
-and the Maven settings that reach the platform's plain-http repository.
+`npm` itself is a shim that points npm at the platform's registries and authenticates to them. The
+addresses are code plus `QITS_DOMAIN` (falling back to `wohlben.eu`), never injected URLs: the
+`@qits` scope at `https://registry.qits.<domain>/artifacts/npm/npm/` and everything else through the
+npmjs cache at `https://mirror.qits.<domain>/npm/npmjs/`, with an `_auth` for both hosts from the
+container's commissioned client pair, which they accept as HTTP Basic (see the shim's header). A
+lockfile written against those names resolves everywhere, so a plain `npm ci` works and nothing
+rewrites a lockfile.
+
+Plus `/etc/profile.d/qits-workspace.sh` for every login shell: a passwd entry for the arbitrary uid,
+and the Maven settings that send the `qits-maven` repository to
+`https://registry.qits.<domain>/artifacts/maven/maven` and Maven Central through the cache at
+`https://mirror.qits.<domain>/mirror/maven/central`, both authenticated with the commissioned client
+pair. The profile derives those two URLs from `QITS_DOMAIN` and exports them for the settings file to
+read; nothing injects them.
 
 ## Building by hand
 

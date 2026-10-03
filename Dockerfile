@@ -78,24 +78,24 @@ COPY qits-git-credential /usr/local/bin/qits-git-credential
 RUN chmod 0755 /usr/local/bin/qits-git-credential
 RUN printf '[credential]\n\thelper = /usr/local/bin/qits-git-credential\n' > /etc/qits-gitconfig
 # The same credential, for the hands that are not git: `qits-token <audience>` mints a bearer for one
-# platform service (the release door, qits-ci's run list, …), and `qits-npm-ci` is `npm ci` with the
-# lockfile's developer-host origins swapped for the platform's registries and then restored byte for
-# byte. Both are inert without the injected environment; both carry their reasoning in their headers.
-# They exist because an agent that could push, build and test inside a workspace still could not
-# release from it without reverse-engineering the door (integrator.md, ad-hoc workspace 351,
-# 2026-08-20) — the guide now names these two.
+# platform service (the release door, qits-ci's run list, …). Inert without the injected
+# environment; it carries its reasoning in its header. It exists because an agent that could push,
+# build and test inside a workspace still could not release from it without reverse-engineering the
+# door (integrator.md, ad-hoc workspace 351, 2026-08-20).
 #
-# THESE THREE EXIST BECAUSE THERE WAS NO CLI, AND THERE IS ONE NOW: `qits`, at the foot of this file.
+# THESE TWO EXIST BECAUSE THERE WAS NO CLI, AND THERE IS ONE NOW: `qits`, at the foot of this file.
 # It is what an agent should reach for first, and the block down there says why it sits last rather
-# than here beside its ancestors. NONE OF THE THREE IS RETIRED BY IT, which is worth stating so
-# nobody reads the new block as a replacement: `qits-git-credential` is the helper
-# /etc/qits-gitconfig names, so git itself runs it on every HTTP remote and no agent decision is
-# involved; `qits-token` and `qits-npm-ci` are named by the workspace guide and by action scripts
-# written against them. Dropping any of the three is a separate change with its own callers to find.
+# than here beside its ancestors. NEITHER IS RETIRED BY IT, which is worth stating so nobody reads
+# the new block as a replacement: `qits-git-credential` is the helper /etc/qits-gitconfig names, so
+# git itself runs it on every HTTP remote and no agent decision is involved; `qits-token` is named by
+# the workspace guide and by action scripts written against it.
+#
+# There was a third, `qits-npm-ci`, which rewrote a lockfile's `resolved` origins for the duration of
+# an install. It is gone (qits-731): the registries are public names that resolve everywhere, so a
+# lockfile already names an address a workspace can reach, and nothing rewrites one.
 COPY qits-token /usr/local/bin/qits-token
-COPY qits-npm-ci /usr/local/bin/qits-npm-ci
-RUN chmod 0755 /usr/local/bin/qits-token /usr/local/bin/qits-npm-ci \
-    && sh -n /usr/local/bin/qits-token && sh -n /usr/local/bin/qits-npm-ci
+RUN chmod 0755 /usr/local/bin/qits-token \
+    && sh -n /usr/local/bin/qits-token
 # `ripgrep`/`fd-find` are general CLI tools (they benefit action scripts) and are also where kimi's
 # search tools resolve `rg`/`fd` on PATH — the pinned kimi installer below ships only the `kimi`
 # binary, not the sidekicks a desktop install carries. Debian names fd `fdfind`, which kimi handles.
@@ -316,20 +316,22 @@ RUN chmod 0644 /etc/qits/maven-settings.xml /etc/profile.d/qits-workspace.sh \
     # command in every workspace: bash -n parses without executing.
     && bash -n /etc/profile.d/qits-workspace.sh
 
-# The @qits scope, which the environment cannot carry. `npm_config_@qits:registry` is npm's only
-# spelling for it and is neither a POSIX env name (qits-containers refuses it, deliberately) nor
-# something a shell can export — so it is injected per-invocation by a shim ahead of the real npm on
-# PATH. The shim's header carries the full reasoning, including why a .npmrc cannot do this job.
+# npm's registries, which the environment cannot fully carry. `npm_config_@qits:registry` is npm's
+# only spelling for the scope and is neither a POSIX env name (qits-containers refuses it,
+# deliberately) nor something a shell can export — so it is injected per-invocation by a shim ahead
+# of the real npm on PATH. The shim's header carries the full reasoning, including why a .npmrc
+# cannot do this job.
 #
 # It shadows `npm`, which is worth stating plainly: `command -v npm` reports /usr/local/bin/npm here.
 # That is the cost of covering the invocations nobody types — Quinoa resolves `npm` from PATH and
 # spawns it straight from the Maven JVM, so a shell function or alias would miss exactly the builds
-# that matter most. The shim execs the real binary and adds nothing when the platform has told us no
-# registry.
+# that matter most.
 #
-# It also carries the npm mirror's credential: npm_config_registry names the mirror through the
-# public edge (https), which wants the container's commissioned client pair as HTTP Basic, and npm's
-# per-registry `//<host><path>/:_auth` key is the same non-exportable kind of name as the scope's.
+# Both registries are code plus QITS_DOMAIN (qits-731): the @qits scope at
+# https://registry.qits.<domain>/artifacts/npm/npm/ and everything else through the npmjs cache at
+# https://mirror.qits.<domain>/npm/npmjs/. Both hosts want the container's commissioned client pair
+# as HTTP Basic, and npm's per-host `//<host>/:_auth` key is the same non-exportable kind of name as
+# the scope's, so the shim carries that too.
 COPY qits-npm-shim.sh /usr/local/bin/npm
 RUN chmod 0755 /usr/local/bin/npm \
     && bash -n /usr/local/bin/npm \
@@ -344,7 +346,7 @@ RUN chmod 0755 /usr/local/bin/npm \
 
 # ---- the qits CLI, on PATH in every agent container ------------------------------------------
 # `qits` is the platform's own command line, and it is the thing an agent should reach for before
-# any of the three shell helpers above: projects and repositories, tickets, epics, release requests,
+# either of the two shell helpers above: projects and repositories, tickets, epics, release requests,
 # CI runs and their logs, domain events, live telemetry, and `qits artifacts publish` for a CI step.
 # It needs no login here — inside a container it signs ITSELF in from the commissioned pair
 # ($QITS_COMMISSIONED_CLIENT_ID / $QITS_COMMISSIONED_CLIENT_SECRET) that qits-workspaces injects, so
@@ -401,7 +403,7 @@ RUN chmod 0755 /usr/local/bin/npm \
 # repository, with the consuming images taking the new base — and in normal work nobody moves it by
 # hand at all, because the maintenance pipeline does.
 #
-# IT SITS AT THE FOOT OF THE FILE, NOT BESIDE ITS THREE ANCESTORS ABOVE, AND THAT IS DELIBERATE. A
+# IT SITS AT THE FOOT OF THE FILE, NOT BESIDE ITS TWO ANCESTORS ABOVE, AND THAT IS DELIBERATE. A
 # `COPY` is cache-keyed on the file's content, so every layer BELOW it rebuilds when the pin moves.
 # Beside the helpers it would sit above the JDK, node, the docker client, the Playwright Chromium,
 # Claude Code, Kimi and jdtls — so bumping the CLI would re-assemble ~3.4 GB of toolchain from the

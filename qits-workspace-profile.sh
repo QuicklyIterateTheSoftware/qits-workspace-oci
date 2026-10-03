@@ -25,23 +25,29 @@ if ! getent passwd "$(id -u)" >/dev/null 2>&1 && [ -w /etc/passwd ]; then
     "$(id -u)" "$(id -g)" "${HOME:-/workspace}" >> /etc/passwd
 fi
 
-# --- 2. point Maven at the platform's repository --------------------------------------------------
-# Maven 3.8+ refuses plain-HTTP repositories outright, and every qits pom declares its platform
-# repository as `qits-maven` over http (there is no TLS inside qits-net). Without the settings file
-# a workspace build dies before it reaches the network, naming a blocker rather than a cause:
+# --- 2. point Maven at the platform's repositories ------------------------------------------------
+# Every qits pom declares its platform repository as `qits-maven`, with a developer-host default
+# address that does not exist inside a container; /etc/qits/maven-settings.xml mirrors that id to
+# qits-artifacts' hosted maven, routes Maven Central through qits-mirror's cache, and sends the
+# container's commissioned client pair to both as HTTP Basic. MAVEN_ARGS (Maven 3.9+) applies it to
+# `./mvnw` as well as `mvn`, which matters because every repository here builds through its wrapper.
 #
-#     Blocked mirror for repositories: [qits-maven (http://…, default, releases+snapshots)]
-#       ... from/to maven-default-http-blocker (http://0.0.0.0/)
-#
-# MAVEN_ARGS (Maven 3.9+) applies it to `./mvnw` as well as `mvn`, which matters because every
-# repository here builds through its wrapper.
-#
-# INERT UNTIL THE DEPLOYMENT TELLS US THE ADDRESS. The settings file's mirror URL is
-# ${env.QITS_MAVEN_REPOSITORY_URL}, which Maven leaves unexpanded when the variable is unset — so
-# the flag is added only when qits-workspaces has injected a real address, and an older platform
-# that injects none behaves exactly as it did before rather than failing against a literal
-# "${env...}" URL.
-if [ -n "${QITS_MAVEN_REPOSITORY_URL:-}" ]; then
+# THE ADDRESSES ARE CODE, NOT CONFIGURATION (qits-731). The platform's only input is QITS_DOMAIN;
+# the hosts and paths are constants, derived here because Maven settings cannot compute a string —
+# the file can only read ${env.*}, so this exports what it reads. Whatever qits-workspaces may still
+# inject under these two names is overwritten, so the image works the same whether or not the
+# service has stopped injecting them. Without QITS_DOMAIN the domain is wohlben.eu, as for the qits
+# CLI; never an internal address. The public names answer from inside the platform network too.
+qits_domain=${QITS_DOMAIN:-wohlben.eu}
+QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$qits_domain/artifacts/maven/maven"
+QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central"
+export QITS_MAVEN_REPOSITORY_URL QITS_MAVEN_CENTRAL_URL
+unset qits_domain
+
+# INERT WITHOUT THE CREDENTIAL. Both hosts answer 401 anonymously, so routing Maven at them with no
+# commissioned pair to send would fail every build that stock Maven Central would have served; the
+# settings are applied only when the pair is there to authenticate with.
+if [ -n "${QITS_COMMISSIONED_CLIENT_ID:-}" ] && [ -n "${QITS_COMMISSIONED_CLIENT_SECRET:-}" ]; then
   case " ${MAVEN_ARGS:-} " in
     # A caller that named its own settings keeps them — a repository's own
     # .qits-maven-settings.xml must still win when someone passes it.

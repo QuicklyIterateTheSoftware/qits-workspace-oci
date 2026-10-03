@@ -1,6 +1,20 @@
 #!/bin/sh
-# npm, with the platform's @qits scope pointed at the registry that actually serves it, and the
-# npm mirror's credential handed to npm for the edge that fronts it.
+# npm, pointed at the platform's two npm registries and carrying the container's credential for
+# both of them.
+#
+# THE ADDRESSES ARE CODE, NOT CONFIGURATION. The platform's only input is QITS_DOMAIN, the bare
+# public domain; the hosts and paths below are constants of the platform (qits-731), the same ones
+# every other consumer derives:
+#
+#   * the @qits scope   — qits-artifacts' hosted npm, https://registry.qits.<domain>/artifacts/npm/npm/
+#   * everything else   — qits-mirror's npmjs cache,  https://mirror.qits.<domain>/npm/npmjs/
+#
+# Without QITS_DOMAIN the domain is wohlben.eu, the way the qits CLI's IdpUrl falls back; never an
+# internal address. Nothing injected by qits-workspaces is read: npm_config_registry is SET here,
+# and overrides whatever the container was created with, so this works the same whether or not
+# the service still injects one. The public names answer from inside the platform network too
+# (hairpin), so one address serves a workspace and a developer host alike — which is also why a
+# lockfile written here records an address that resolves everywhere, and nothing ever rewrites one.
 #
 # WHY A SHIM AND NOT ENVIRONMENT. npm's only spelling for a scoped registry is the config key
 # `@qits:registry`, whose environment form is `npm_config_@qits:registry` — a name containing `@`
@@ -16,45 +30,37 @@
 # A process CAN inherit such a name (measured: bash passes it through untouched and `npm config get
 # @qits:registry` reads it), which is what makes `env` in the exec below work where `export` cannot.
 #
-# WHY NOT A .npmrc. npm ranks a PROJECT .npmrc above the user and global ones, and every SPA here
-# commits one naming the deployment host's own port — an address that does not exist inside a
-# container. Only the command line and the environment outrank it, so nothing written to a file in
-# HOME could win.
+# WHY NOT A .npmrc. npm ranks a PROJECT .npmrc above the user and global ones, and a repository may
+# commit one naming some other registry. Only the command line and the environment outrank it, so
+# nothing written to a file in HOME could win — and nothing here touches the disk at all.
 #
-# THE MIRROR'S CREDENTIAL, BY THE SAME ROUTE. npm_config_registry — the npmjs pull-through cache,
-# injected by qits-workspaces — names the mirror THROUGH THE PUBLIC EDGE now
-# (https://mirror.qits.<domain>/npm/npmjs/), not its qits-net alias, and the edge wants the caller
-# authenticated. It accepts HTTP Basic with the container's own commissioned client pair
-# (QITS_COMMISSIONED_CLIENT_ID / _SECRET, the identity every agent container already carries), which
-# is exactly npm's per-registry `_auth` (base64 of `user:password`). npm keys that per registry by
-# its "nerf-dart", `//<host><path>/:_auth`, and its environment form `npm_config_//<host><path>/:_auth`
-# is the same kind of name as the scope's — `/` and `:` in it, no shell can export it — so it rides
-# the same `env` exec. npm matches the key as a PATH PREFIX of every request, so the packuments and
-# the tarballs under that path (including a lockfile's `resolved` URLs once qits-npm-ci has swapped
-# their origin) all carry it; nothing else does, so the credential never leaves for another host.
-# Only over https: Basic over plain http would hand the secret to every hop, and an http registry is
-# an internal alias that never asked for it.
+# THE CREDENTIAL, BY THE SAME ROUTE. Both public hosts answer 401 anonymously. They accept HTTP
+# Basic with the container's own commissioned client pair (QITS_COMMISSIONED_CLIENT_ID / _SECRET,
+# the identity every agent container already carries), which is exactly npm's per-registry `_auth`
+# (base64 of `user:password`). npm keys that by "nerf-dart", `//<host>/:_auth`, and its environment
+# form `npm_config_//<host>/:_auth` is the same kind of name as the scope's — `/` and `:` in it, no
+# shell can export it — so it rides the same `env` exec. npm looks a request's credential up by
+# walking its URL's path back towards the host, so a host-level key covers every packument and
+# tarball that host serves (a lockfile's `resolved` URLs included) and nothing on any other host:
+# the credential never leaves for a registry that did not ask for it. One key per host, both
+# hosts, always https.
 #
-# INERT UNTIL TOLD, like the Maven half: with neither the @qits address nor an https registry plus
-# the commissioned pair, this execs npm with nothing added and npm behaves exactly as it always did.
-# Both may apply at once; each only prepends its assignment, and there is one exec.
+# Without the commissioned pair the registries are still set and no `_auth` is added; the hosts
+# will then refuse, which names the missing credential rather than hiding it behind a fallback.
+# An explicit `--registry` on the command line still outranks all of this, as npm intends.
+qits_domain=${QITS_DOMAIN:-wohlben.eu}
+qits_hosted="registry.qits.$qits_domain"
+qits_proxy="mirror.qits.$qits_domain"
 set -- /usr/bin/npm "$@"
-if [ -n "${QITS_WORKSPACE_NPM_REGISTRY_URL:-}" ]; then
-  set -- "npm_config_@qits:registry=$QITS_WORKSPACE_NPM_REGISTRY_URL" "$@"
+if [ -n "${QITS_COMMISSIONED_CLIENT_ID:-}" ] && [ -n "${QITS_COMMISSIONED_CLIENT_SECRET:-}" ]; then
+  # `tr`, not `base64 -w0`: GNU wraps at 76 columns and a long secret would put a newline in the
+  # value; stripping it works on every base64 there is.
+  qits_auth=$(printf '%s:%s' "$QITS_COMMISSIONED_CLIENT_ID" "$QITS_COMMISSIONED_CLIENT_SECRET" \
+    | base64 | tr -d '\n')
+  set -- "npm_config_//$qits_hosted/:_auth=$qits_auth" \
+    "npm_config_//$qits_proxy/:_auth=$qits_auth" "$@"
 fi
-case "${npm_config_registry:-}" in
-  https://*)
-    if [ -n "${QITS_COMMISSIONED_CLIENT_ID:-}" ] && [ -n "${QITS_COMMISSIONED_CLIENT_SECRET:-}" ]; then
-      # The nerf-dart: scheme off, query/fragment off, exactly one trailing slash.
-      qits_nerf=${npm_config_registry#https://}
-      qits_nerf=${qits_nerf%%[?#]*}
-      qits_nerf="${qits_nerf%/}/"
-      # `tr`, not `base64 -w0`: GNU wraps at 76 columns and a long secret would put a newline in the
-      # value; stripping it works on every base64 there is.
-      qits_auth=$(printf '%s:%s' "$QITS_COMMISSIONED_CLIENT_ID" "$QITS_COMMISSIONED_CLIENT_SECRET" \
-        | base64 | tr -d '\n')
-      set -- "npm_config_//$qits_nerf:_auth=$qits_auth" "$@"
-    fi
-    ;;
-esac
-exec env "$@"
+exec env \
+  "npm_config_registry=https://$qits_proxy/npm/npmjs/" \
+  "npm_config_@qits:registry=https://$qits_hosted/artifacts/npm/npm/" \
+  "$@"
