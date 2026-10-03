@@ -61,8 +61,8 @@
              the daemons-store coordinate of the `qits` binary: the same qits-platform-access-cli
              release publishes both, under one string. Both release recipes read THIS LINE out of
              this file and fetch
-             `$QITS_ARTIFACTS_URL/artifacts/daemons/qits-platform-access-cli/<it>` into the build
-             context, and the Dockerfile COPYs the result to /usr/local/bin/qits. Every agent
+             `https://registry.qits.$QITS_DOMAIN/artifacts/daemons/qits-platform-access-cli/<it>`
+             into the build context, and the Dockerfile COPYs the result to /usr/local/bin/qits. Every agent
              container on the platform — workspace, editor, project-agent — is built FROM this image,
              so this line decides which qits CLI they all run.
 
@@ -80,7 +80,7 @@
         <!-- Where this resolves the platform's own artifacts. The settings file mirrors this
              repository id onto the in-network address inside a CI step; a declared repository is what
              gives it something to mirror. -->
-        <qits.maven.repository.url>http://registry.dev.localhost:8080/artifacts/maven/maven</qits.maven.repository.url>
+        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
     </properties>
 
     <repositories>

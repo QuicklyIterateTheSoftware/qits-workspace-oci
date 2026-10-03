@@ -370,10 +370,11 @@ RUN chmod 0755 /usr/local/bin/npm \
 # the reasoning is beside the fetch, in both of them.
 #
 # The CI STEP container already holds both halves — CiDaemonLauncher injects
-# QITS_COMMISSIONED_CLIENT_ID, QITS_COMMISSIONED_CLIENT_SECRET, QITS_GIT_AUTH_TOKEN_URL and
-# QITS_ARTIFACTS_URL into every step — so the STEP mints the bearer and fetches the file, and
-# `buildctl build --local context=.` sends it up with everything else. Both recipes carry that fetch,
-# byte for byte identical, exactly as their buildctl lines already are.
+# QITS_COMMISSIONED_CLIENT_ID, QITS_COMMISSIONED_CLIENT_SECRET and QITS_GIT_AUTH_TOKEN_URL into
+# every step, and the recipe derives the artifacts store's address itself from QITS_DOMAIN
+# (qits-731; `wohlben.eu` where it is not injected) — so the STEP mints the bearer and fetches the
+# file, and `buildctl build --local context=.` sends it up with everything else. Both recipes carry
+# that fetch, byte for byte identical, exactly as their buildctl lines already are.
 #
 # THE VERSION IS NOT IN THIS FILE. It is a maven property pin — `qits.platform-access-cli-binary.version`
 # in this repository's `pom.xml`, on a dependency of `eu.wohlben.qits:qits-platform-access-cli-binary`

@@ -33,18 +33,21 @@ release-request:
   - image: qits/build-images/maven-base:latest
     timeout-seconds: 1800
     script: |
+      # The addresses are code under the platform's public domain (qits-731); `wohlben.eu` covers a
+      # qits-ci too old to inject $QITS_DOMAIN. Computed on its own line, before the assignment
+      # chain below, deliberately: a `#` line spliced between two backslash-continued `VAR=val \`
+      # assignments detaches everything above it into a bare, unexported shell variable that never
+      # reaches mvnw's environment — measured with `env -i sh -x`.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
       # The commissioned pair where there is one (INTERNAL); otherwise what qits-ci already put in
       # QITS_MAVEN_AUTH_USR/PSW — the run's token subject and token on the EDGE plane (qits-443),
       # which the bare `${QITS_COMMISSIONED_CLIENT_ID-}` used to overwrite with an empty string,
-      # a 401 from the public mirror on the first Central artifact. The comment sits above the whole
-      # assignment chain, not inside it: a `#` line spliced between two backslash-continued
-      # `VAR=val \` assignments detaches everything above it into a bare, unexported shell variable
-      # that never reaches mvnw's environment — measured with `env -i sh -x`.
-      QITS_MAVEN_CENTRAL_URL="${QITS_MAVEN_PROXY_URL:-}" \
+      # a 401 from the public mirror on the first Central artifact.
+      QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central" \
       QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID:-${QITS_MAVEN_AUTH_USR-}}" \
       QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET:-${QITS_MAVEN_AUTH_PSW-}}" \
       ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
-        -Dqits.maven.repository.url="$QITS_MAVEN_REGISTRY_URL"
+        -Dqits.maven.repository.url="https://registry.qits.$qits_domain/artifacts/maven/maven"
 
   - image: qits/build-images/ci-base:latest
     build: true
@@ -58,7 +61,10 @@ release-request:
       # write either.
       cli_version=$(sed -nE 's#^[[:space:]]*<qits\.platform-access-cli-binary\.version>(.+)</qits\.platform-access-cli-binary\.version>[[:space:]]*$#\1#p' pom.xml)
       : "${cli_version:?pom.xml declares no <qits.platform-access-cli-binary.version> property; the image pins no qits CLI}"
-      : "${QITS_ARTIFACTS_URL:?the artifacts store address is not injected}"
+      # The address is code under the platform's public domain (qits-731); `wohlben.eu` covers a
+      # qits-ci too old to inject $QITS_DOMAIN.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      artifacts_url="https://registry.qits.$qits_domain"
       # THE BEARER IS THE RUN'S OWN TOKEN ON THE EDGE PLANE (qits-443), not a mint: qits-ci sets
       # $QITS_TOKEN there and nothing else, so requiring the commissioned pair unconditionally — as
       # this step used to, with a bare `${QITS_COMMISSIONED_CLIENT_ID:?}` — failed every EDGE run
@@ -83,9 +89,9 @@ release-request:
       # purpose and neither may be changed here. The VERSION is the third name for one thing: the
       # maven pin above and this daemons-store coordinate are one string, published by one release.
       curl -fsSL --retry 2 --retry-delay 2 -H "Authorization: Bearer $cli_token" \
-        -o qits "$QITS_ARTIFACTS_URL/artifacts/daemons/qits-platform-access-cli/$cli_version"
+        -o qits "$artifacts_url/artifacts/daemons/qits-platform-access-cli/$cli_version"
       [ -s qits ] || { echo "the qits CLI download is empty" >&2; exit 1; }
-      ref="$QITS_BUILD_REGISTRY/$QITS_IMAGE_REPOSITORY/workspace-base:$QITS_CI_SHA"
+      ref="registry.qits.$qits_domain/$QITS_IMAGE_REPOSITORY/workspace-base:$QITS_CI_SHA"
       buildctl build --frontend dockerfile.v0 \
         --local context=. --local dockerfile=. \
         --opt build-arg:QITS_CLI_VERSION="$cli_version" \
@@ -95,16 +101,19 @@ release:
   - image: qits/build-images/maven-base:latest
     timeout-seconds: 1800
     script: |
+      # The addresses are code under the platform's public domain (qits-731); `wohlben.eu` covers a
+      # qits-ci too old to inject $QITS_DOMAIN. Computed on its own line, before the assignment
+      # chain below — see the release-request slot's maven step for why.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
       # The commissioned pair where there is one (INTERNAL); otherwise what qits-ci already put in
       # QITS_MAVEN_AUTH_USR/PSW — the run's token subject and token on the EDGE plane (qits-443),
       # which the bare `${QITS_COMMISSIONED_CLIENT_ID-}` used to overwrite with an empty string,
-      # a 401 from the public mirror on the first Central artifact. Comment above the whole
-      # assignment chain, not inside it — see the release-request slot's maven step for why.
-      QITS_MAVEN_CENTRAL_URL="${QITS_MAVEN_PROXY_URL:-}" \
+      # a 401 from the public mirror on the first Central artifact.
+      QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central" \
       QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID:-${QITS_MAVEN_AUTH_USR-}}" \
       QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET:-${QITS_MAVEN_AUTH_PSW-}}" \
       ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
-        -Dqits.maven.repository.url="$QITS_MAVEN_REGISTRY_URL"
+        -Dqits.maven.repository.url="https://registry.qits.$qits_domain/artifacts/maven/maven"
 
   - image: qits/build-images/ci-base:latest
     build: true
@@ -112,7 +121,10 @@ release:
     script: |
       cli_version=$(sed -nE 's#^[[:space:]]*<qits\.platform-access-cli-binary\.version>(.+)</qits\.platform-access-cli-binary\.version>[[:space:]]*$#\1#p' pom.xml)
       : "${cli_version:?pom.xml declares no <qits.platform-access-cli-binary.version> property; the image pins no qits CLI}"
-      : "${QITS_ARTIFACTS_URL:?the artifacts store address is not injected}"
+      # The address is code under the platform's public domain (qits-731); `wohlben.eu` covers a
+      # qits-ci too old to inject $QITS_DOMAIN.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      artifacts_url="https://registry.qits.$qits_domain"
       # THE BEARER IS THE RUN'S OWN TOKEN ON THE EDGE PLANE (qits-443), not a mint: qits-ci sets
       # $QITS_TOKEN there and nothing else, so requiring the commissioned pair unconditionally — as
       # this step used to, with a bare `${QITS_COMMISSIONED_CLIENT_ID:?}` — failed every EDGE run
@@ -133,9 +145,9 @@ release:
         : "${cli_token:?the idp minted no qits-platform bearer for the commissioned client}"
       fi
       curl -fsSL --retry 2 --retry-delay 2 -H "Authorization: Bearer $cli_token" \
-        -o qits "$QITS_ARTIFACTS_URL/artifacts/daemons/qits-platform-access-cli/$cli_version"
+        -o qits "$artifacts_url/artifacts/daemons/qits-platform-access-cli/$cli_version"
       [ -s qits ] || { echo "the qits CLI download is empty" >&2; exit 1; }
-      ref="$QITS_BUILD_REGISTRY/$QITS_IMAGE_REPOSITORY/workspace-base:$QITS_VERSION"
+      ref="registry.qits.$qits_domain/$QITS_IMAGE_REPOSITORY/workspace-base:$QITS_VERSION"
       buildctl build --frontend dockerfile.v0 \
         --local context=. --local dockerfile=. \
         --opt build-arg:QITS_CLI_VERSION="$cli_version" \

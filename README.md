@@ -118,8 +118,9 @@ platform credential and the recipe hands it no platform address. With a `qits-pl
 `$token`:
 
     version=$(sed -nE 's#^[[:space:]]*<qits\.platform-access-cli-binary\.version>(.+)</qits\.platform-access-cli-binary\.version>[[:space:]]*$#\1#p' pom.xml)
+    qits_domain=${QITS_DOMAIN:-wohlben.eu}
     curl -fsSL -H "Authorization: Bearer $token" \
-      -o qits "$QITS_ARTIFACTS_URL/artifacts/daemons/qits-platform-access-cli/$version"
+      -o qits "https://registry.qits.$qits_domain/artifacts/daemons/qits-platform-access-cli/$version"
 
     docker build --build-arg QITS_CLI_VERSION="$version" -t qits/workspace-base:latest .
 

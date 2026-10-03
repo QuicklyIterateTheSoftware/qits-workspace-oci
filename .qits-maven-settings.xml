@@ -3,33 +3,25 @@
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
   <mirrors>
-    <!-- Exact repository-id matches win over Maven's external:http:* blocker without permitting
-         arbitrary HTTP repositories. -->
-    <!-- THE URL IS THE `-D` PROPERTY, NOT `${env.QITS_MAVEN_REPOSITORY_URL}`, AND THAT IS THE ONE
-         LINE THAT DIFFERS FROM THE FILE THIS WAS COPIED FROM. qits-ci injects
-         QITS_MAVEN_REGISTRY_URL into a step and nothing injects QITS_MAVEN_REPOSITORY_URL, so the
-         env spelling interpolates to NOTHING in a release step — and Maven does not fail on an
-         unresolved property here, it dials the literal text: `Could not transfer … from/to
-         qits-maven-network (${env.QITS_MAVEN_REPOSITORY_URL}): Cannot access … with type default`.
-         Measured on gating run 3b1e7b57, and reproduced here against a clean local repository with
-         the variable unset.
-
-         qits-workspace-editor-oci carries the env spelling and is fine with it, which is why the
-         copy came over unchanged and why this is worth a comment rather than a silent edit: that
-         reactor resolves junit and nothing else, so its mirror is never consulted for a platform
-         artifact. THIS one exists to resolve `eu.wohlben.qits:qits-platform-access-cli-binary`
-         through that mirror, so the URL is load-bearing on every build. `qits.maven.repository.url`
-         is what both recipes already pass with `-D` and what the pom declares, so the mirror now
-         reads the same one value the rest of this repository does. -->
+    <!-- THE URL IS THE `-D` PROPERTY, NOT `${env.QITS_MAVEN_REPOSITORY_URL}`. qits-ci's recipes no
+         longer inject any URL variable (qits-731): both recipes derive the host from QITS_DOMAIN and
+         pass it with `-Dqits.maven.repository.url`, which is also the pom's own default — so the
+         mirror reads the same one value the rest of this repository does, on the platform and off
+         it. qits-workspace-editor-oci carries the env spelling, which is fine there: that reactor
+         resolves junit and nothing else, so its mirror is never consulted for a platform artifact.
+         THIS one exists to resolve `eu.wohlben.qits:qits-platform-access-cli-binary` through the
+         mirror, so the URL is load-bearing on every build. Exact repository-id matches win over
+         Maven's external:http:* blocker without permitting arbitrary HTTP repositories. -->
     <mirror>
       <id>qits-maven-network</id>
       <mirrorOf>qits-maven</mirrorOf>
       <url>${qits.maven.repository.url}</url>
     </mirror>
-    <!-- Maven Central through qits-platform-mirror's pull-through cache. The exact repository id is
-         the same blocker exemption the entry above uses, scoped to the one repository the profile
-         below declares — so while QITS_MAVEN_CENTRAL_URL is unset or empty, nothing declares
-         qits-central, this entry matches nothing, and the unexpanded URL is never dialled. -->
+    <!-- Maven Central through qits-mirror's cache, https://mirror.qits.$QITS_DOMAIN/mirror/maven/central,
+         derived by both recipes. The exact repository id is the same blocker exemption the entry
+         above uses, scoped to the one repository the profile below declares — so while
+         QITS_MAVEN_CENTRAL_URL is unset or empty, nothing declares qits-central, this entry matches
+         nothing, and the unexpanded URL is never dialled. -->
     <mirror>
       <id>qits-central-proxy</id>
       <mirrorOf>qits-central</mirrorOf>
@@ -43,11 +35,9 @@
       <username>${env.QITS_MAVEN_AUTH_USR}</username>
       <password>${env.QITS_MAVEN_AUTH_PSW}</password>
     </server>
-    <!-- Same commissioned credential, for the mirror's central pull-through. Maven presents it
-         only on the edge's 401 (a build resolving Central at
-         mirror.dev.localhost:8080/mirror/maven/central); an in-network step-plane read is anonymous
-         and never sends it. Both variables are the BuildKit secret mounts on docker/Dockerfile's
-         mvnw RUN, as for qits-maven-network. -->
+    <!-- Same commissioned credential, for the Central cache: both hosts answer 401 anonymously, so
+         every build that resolves through them needs it. Both variables are the BuildKit secret
+         mounts on docker/Dockerfile's mvnw RUN, as for qits-maven-network. -->
     <server>
       <id>qits-central-proxy</id>
       <username>${env.QITS_MAVEN_AUTH_USR}</username>
@@ -56,11 +46,12 @@
   </servers>
   <profiles>
     <!-- Active only while QITS_MAVEN_CENTRAL_URL is NON-EMPTY — measured on Maven 3.9: an empty
-         environment value does not activate a property-presence profile, so an injected-empty
-         variable is the off switch and no call site needs a guard. Central itself is re-declared
-         DISABLED, because repository ordering consults the stock central first and the mirror above
-         would never see a request; qits-central takes its place and the mirror reroutes it whole to
-         the pull-through. Unset means stock Maven Central, exactly as before this profile existed. -->
+         environment value does not activate a property-presence profile. Both recipes always set
+         it, so the platform build always resolves Central through the cache; unset or empty is the
+         off switch for a build outside the platform, and means stock Maven Central. Central itself
+         is re-declared DISABLED, because repository ordering consults the stock central first and
+         the mirror above would never see a request; qits-central takes its place and the mirror
+         reroutes it whole to the cache. -->
     <profile>
       <id>qits-central-proxy</id>
       <activation>
