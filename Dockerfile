@@ -26,7 +26,7 @@
 # ONE LINE, ONE VERSION TOKEN, AND A MACHINE EDITS IT: qits-maintenance reads literal
 # `ARG <NAME>=<image>:<tag>` defaults as docker pins and bumps the tag. Keep the value literal. The
 # registry host is the builder's to resolve (its registry config maps the edge spelling in-network).
-ARG BROWSER_BASE=registry.dev.localhost:8080/qits/build-images/node-browser-base:2026.1002.170951
+ARG BROWSER_BASE=registry.dev.localhost:8080/qits/build-images/node-browser-base:2026.1003.45515
 FROM ${BROWSER_BASE}
 
 ENV DEBIAN_FRONTEND=noninteractive
