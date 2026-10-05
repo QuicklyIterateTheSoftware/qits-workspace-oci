@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The Maven settings every workspace build runs with, applied through MAVEN_ARGS by
+  /etc/profile.d/qits-workspace.sh.
+
+  WHAT IT DOES. Every qits pom declares its platform repository as `qits-maven`, with a default
+  address (the deployment host's published port) that does not exist inside a container; the first
+  mirror below reroutes that one id to qits-artifacts' hosted maven. The second routes Maven
+  Central through qits-mirror's pull-through cache. The `.qits-maven-settings.xml` each repository
+  carries for its image build does the same job for a CI step.
+
+  THE URLS ARE CODE, NOT CONFIGURATION (qits-731): https://registry.qits.<domain>/artifacts/maven/maven
+  and https://mirror.qits.<domain>/mirror/maven/central, with QITS_DOMAIN the platform's one input.
+  A settings file cannot compute a string, so the profile script derives both from QITS_DOMAIN and
+  exports them as QITS_MAVEN_REPOSITORY_URL and QITS_MAVEN_CENTRAL_URL; nothing is injected.
+
+  <mirrorOf> IS THE REPOSITORY ID AND NOTHING WIDER. Not `*` and not `external:*`: a workspace
+  builds whatever repository it was opened on, and a wildcard would route repositories through a
+  registry that does not serve them. Only the ids named here are redirected. (The exact-id match
+  also outranks Maven 3.8+'s plain-http blocker, which is why a pom's http default never trips it.)
+
+  <servers> CARRY THE CONTAINER'S OWN IDENTITY. Both public hosts answer 401 anonymously and
+  accept a bearer in an Authorization header, forwarded from QITS_TOKEN by this file's
+  qits-workspace-profile.sh sibling — qits-maven-settings.xml (the commissioned-pair form) is
+  used instead when no QITS_TOKEN is carried; each server id is the id of the mirror it
+  authenticates, which is how Maven pairs them.
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
+  <mirrors>
+    <mirror>
+      <id>qits-maven-network</id>
+      <mirrorOf>qits-maven</mirrorOf>
+      <url>${env.QITS_MAVEN_REPOSITORY_URL}</url>
+    </mirror>
+    <!-- Maven Central through qits-mirror's pull-through cache, scoped to the one repository the
+         profile below declares — so if QITS_MAVEN_CENTRAL_URL were ever unset or empty, nothing
+         would declare qits-central, this entry would match nothing, and the unexpanded URL would
+         never be dialled. -->
+    <mirror>
+      <id>qits-central-proxy</id>
+      <mirrorOf>qits-central</mirrorOf>
+      <url>${env.QITS_MAVEN_CENTRAL_URL}</url>
+    </mirror>
+  </mirrors>
+  <servers>
+    <server>
+      <id>qits-maven-network</id>
+      <configuration>
+        <httpHeaders>
+          <property>
+            <name>Authorization</name>
+            <value>Bearer ${env.QITS_TOKEN}</value>
+          </property>
+        </httpHeaders>
+      </configuration>
+    </server>
+    <server>
+      <id>qits-central-proxy</id>
+      <configuration>
+        <httpHeaders>
+          <property>
+            <name>Authorization</name>
+            <value>Bearer ${env.QITS_TOKEN}</value>
+          </property>
+        </httpHeaders>
+      </configuration>
+    </server>
+  </servers>
+  <profiles>
+    <!-- Active only while QITS_MAVEN_CENTRAL_URL is NON-EMPTY — measured on Maven 3.9: an empty
+         environment value does not activate a property-presence profile. The profile script always
+         derives it, so in a workspace this is always on. Central itself is re-declared
+         DISABLED, because repository ordering consults the stock central first and the mirror above
+         would never see a request; qits-central takes its place and the mirror reroutes it whole to
+         the pull-through. Unset means stock Maven Central, exactly as before this profile existed. -->
+    <profile>
+      <id>qits-central-proxy</id>
+      <activation>
+        <property><name>env.QITS_MAVEN_CENTRAL_URL</name></property>
+      </activation>
+      <repositories>
+        <repository>
+          <id>central</id>
+          <url>https://repo1.maven.org/maven2</url>
+          <releases><enabled>false</enabled></releases>
+          <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+        <repository>
+          <id>qits-central</id>
+          <url>https://repo1.maven.org/maven2</url>
+          <releases><enabled>true</enabled></releases>
+          <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+      </repositories>
+      <pluginRepositories>
+        <pluginRepository>
+          <id>central</id>
+          <url>https://repo1.maven.org/maven2</url>
+          <releases><enabled>false</enabled></releases>
+          <snapshots><enabled>false</enabled></snapshots>
+        </pluginRepository>
+        <pluginRepository>
+          <id>qits-central</id>
+          <url>https://repo1.maven.org/maven2</url>
+          <releases><enabled>true</enabled></releases>
+          <snapshots><enabled>false</enabled></snapshots>
+        </pluginRepository>
+      </pluginRepositories>
+    </profile>
+  </profiles>
+</settings>

@@ -45,14 +45,24 @@
 # the credential never leaves for a registry that did not ask for it. One key per host, both
 # hosts, always https.
 #
-# Without the commissioned pair the registries are still set and no `_auth` is added; the hosts
-# will then refuse, which names the missing credential rather than hiding it behind a fallback.
-# An explicit `--registry` on the command line still outranks all of this, as npm intends.
+# QITS_TOKEN, WHERE IT IS CARRIED, WINS OVER THE PAIR. A workspace container holds a token
+# forwarded by the edge, not a pair to mint with, so there is nothing to base64: the bearer rides
+# npm's per-host `//<host>/:_authToken`, the same non-exportable shape as `_auth`, carrying the
+# token itself rather than `user:password`. Only one of the two keys is ever set for a host.
+#
+# Without either credential the registries are still set and no auth key is added; the hosts will
+# then refuse, which names the missing credential rather than hiding it behind a fallback. An
+# explicit `--registry` on the command line still outranks all of this, as npm intends.
 qits_domain=${QITS_DOMAIN:-wohlben.eu}
 qits_hosted="registry.qits.$qits_domain"
 qits_proxy="mirror.qits.$qits_domain"
 set -- /usr/bin/npm "$@"
-if [ -n "${QITS_COMMISSIONED_CLIENT_ID:-}" ] && [ -n "${QITS_COMMISSIONED_CLIENT_SECRET:-}" ]; then
+if [ -n "${QITS_TOKEN:-}" ]; then
+  # A workspace container carries a token forwarded by the edge, not a pair to mint with: npm's
+  # per-host bearer key, `//<host>/:_authToken`, is exactly that — no base64, nothing to encode.
+  set -- "npm_config_//$qits_hosted/:_authToken=$QITS_TOKEN" \
+    "npm_config_//$qits_proxy/:_authToken=$QITS_TOKEN" "$@"
+elif [ -n "${QITS_COMMISSIONED_CLIENT_ID:-}" ] && [ -n "${QITS_COMMISSIONED_CLIENT_SECRET:-}" ]; then
   # `tr`, not `base64 -w0`: GNU wraps at 76 columns and a long secret would put a newline in the
   # value; stripping it works on every base64 there is.
   qits_auth=$(printf '%s:%s' "$QITS_COMMISSIONED_CLIENT_ID" "$QITS_COMMISSIONED_CLIENT_SECRET" \

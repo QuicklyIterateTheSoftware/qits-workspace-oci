@@ -1,21 +1,29 @@
 #!/bin/sh
-# qits-token <audience> — print a bearer minted from this container's commissioned client.
+# qits-token <audience> — print a bearer for one platform audience.
 #
-# The same credential and token endpoint the git helper uses, for everything that is not git: the
-# release door, qits-ci's run list, any platform API on the platform network. A token is cut for
-# ONE service — the audience is that service's alias (dev-qits-workspaces, dev-qits-ci, …), which
-# is what the service checks as its machine audience — so ask per service and never reuse one
-# across them. Tokens are short-lived by the idp's TTL; mint at the call site rather than caching.
+# Ask for qits-platform: the public edge forwards a bearer minted for that one audience to every
+# service behind it, so the same token reaches qits-projects' release door, qits-ci's run list, or
+# any other platform API —
 #
-#   curl -H "Authorization: Bearer $(qits-token dev-qits-workspaces)" http://dev-qits-workspaces:8080/…
+#   curl -H "Authorization: Bearer $(qits-token qits-platform)" https://projects.qits.$QITS_DOMAIN/projects/api/…
+#
+# With QITS_TOKEN set (every workspace container carries one), this prints that token outright and
+# ignores the audience argument — the edge already forwards a qits-platform JWT, so there is
+# nothing left to mint. Otherwise it mints fresh from this container's commissioned client, one
+# call per audience named. Tokens are short-lived by the idp's TTL; mint/read at the call site
+# rather than caching.
 #
 # Loud when it cannot work, unlike the git helper: that one must stay silent so git falls through
 # to its next helper, this one is called by a person or an agent who needs to know why.
 set -eu
 audience=${1:-}
 if [ -z "$audience" ]; then
-  echo "usage: qits-token <audience>   (a platform service alias, e.g. ${QITS_WORKSPACE_DAEMON_AUTH_AUDIENCE:-dev-qits-workspaces})" >&2
+  echo "usage: qits-token <audience>   (a platform audience, e.g. ${QITS_WORKSPACE_DAEMON_AUTH_AUDIENCE:-qits-platform})" >&2
   exit 2
+fi
+if [ -n "${QITS_TOKEN:-}" ]; then
+  printf %s "$QITS_TOKEN"
+  exit 0
 fi
 if [ -z "${QITS_COMMISSIONED_CLIENT_ID:-}" ] || [ -z "${QITS_COMMISSIONED_CLIENT_SECRET:-}" ]; then
   echo "qits-token: this container carries no commissioned client (QITS_COMMISSIONED_CLIENT_ID/_SECRET unset)" >&2
@@ -26,9 +34,11 @@ if [ -z "${QITS_GIT_AUTH_TOKEN_URL:-}" ]; then
   exit 1
 fi
 response=$(curl -fsS --connect-timeout 2 --max-time 10 \
-  -u "$QITS_COMMISSIONED_CLIENT_ID:$QITS_COMMISSIONED_CLIENT_SECRET" \
   -H 'Content-Type: application/x-www-form-urlencoded' \
-  --data "grant_type=client_credentials&audience=$audience" \
+  --data-urlencode "client_id=$QITS_COMMISSIONED_CLIENT_ID" \
+  --data-urlencode "client_secret=$QITS_COMMISSIONED_CLIENT_SECRET" \
+  --data-urlencode "grant_type=client_credentials" \
+  --data-urlencode "audience=$audience" \
   "$QITS_GIT_AUTH_TOKEN_URL") || { echo "qits-token: the idp refused the commissioned client for audience $audience" >&2; exit 1; }
 printf '%s' "$response" | jq -er '.access_token // empty' \
   || { echo "qits-token: the idp answered without an access_token" >&2; exit 1; }

@@ -86,29 +86,45 @@ including why it sits last.
 
 ### Two shell helpers, older than the CLI and not retired by it
 
-Both inert until qits-workspaces injects the environment they read:
+Both inert until qits-workspaces injects the environment they read, and both take **two** branches
+depending on what that environment carries:
 
-- `qits-git-credential` — git's credential helper, answering the injected githost authority with a
-  short-lived bearer minted from the container's commissioned client (and nothing else: a checkout
-  can name arbitrary submodule remotes).
-- `qits-token <audience>` — the same mint, for the hands that are not git: qits-projects' release
-  requests, the ci run list, any platform API. One token per service, the audience is that service's
-  alias.
+- With `QITS_TOKEN` set (every workspace container carries one, forwarded by the public edge): they
+  answer straight from it and never mint. `qits-git-credential` sends it as `password=`, exactly as
+  it would a minted one; `qits-token <audience>` prints it outright and ignores `<audience>` — the
+  edge already forwards a `qits-platform` JWT, which every service accepts, so there is nothing left
+  to mint and no point asking for one audience over another.
+- Otherwise, the pair branch: a bearer minted from the container's commissioned client
+  (`QITS_COMMISSIONED_CLIENT_ID` / `_SECRET`), posted to the idp with `client_secret_post` — the
+  pair in the form body alongside `grant_type` and `audience`, never as HTTP Basic `-u`.
+
+In full:
+
+- `qits-git-credential` — git's credential helper, answering the injected githost authority with
+  either branch above (and nothing else: a checkout can name arbitrary submodule remotes). Silent
+  and exit 0 on every failure, so git falls through to its next helper.
+- `qits-token <audience>` — the same two branches, for the hands that are not git: qits-projects'
+  release requests, the ci run list, any platform API. Ask for `qits-platform`; loud on failure,
+  unlike the git helper, since a person or an agent calling it needs to know why.
 
 `npm` itself is a shim that points npm at the platform's registries and authenticates to them. The
 addresses are code plus `QITS_DOMAIN` (falling back to `wohlben.eu`), never injected URLs: the
 `@qits` scope at `https://registry.qits.<domain>/artifacts/npm/npm/` and everything else through the
-npmjs cache at `https://mirror.qits.<domain>/npm/npmjs/`, with an `_auth` for both hosts from the
-container's commissioned client pair, which they accept as HTTP Basic (see the shim's header). A
-lockfile written against those names resolves everywhere, so a plain `npm ci` works and nothing
-rewrites a lockfile.
+npmjs cache at `https://mirror.qits.<domain>/npm/npmjs/`. With `QITS_TOKEN` set it carries that as a
+per-host `_authToken`; otherwise an `_auth` for both hosts from the container's commissioned client
+pair, which they accept as HTTP Basic (see the shim's header). A lockfile written against those
+names resolves everywhere, so a plain `npm ci` works and nothing rewrites a lockfile.
 
 Plus `/etc/profile.d/qits-workspace.sh` for every login shell: a passwd entry for the arbitrary uid,
 and the Maven settings that send the `qits-maven` repository to
 `https://registry.qits.<domain>/artifacts/maven/maven` and Maven Central through the cache at
-`https://mirror.qits.<domain>/mirror/maven/central`, both authenticated with the commissioned client
-pair. The profile derives those two URLs from `QITS_DOMAIN` and exports them for the settings file to
-read; nothing injects them.
+`https://mirror.qits.<domain>/mirror/maven/central`. With `QITS_TOKEN` set the profile applies
+`/etc/qits/maven-settings-token.xml`, whose two `<server>` entries carry the token as an
+`Authorization: Bearer` header and no username or password; otherwise it applies
+`/etc/qits/maven-settings.xml`, authenticated with the commissioned client pair, exactly as before.
+A caller that already passes its own `-s`/`--settings` keeps it either way. The profile derives the
+two mirror URLs from `QITS_DOMAIN` and exports them for whichever settings file is applied to read;
+nothing injects them.
 
 ## Building by hand
 

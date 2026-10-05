@@ -75,7 +75,17 @@ RUN apt-get update \
 # which answered those too would disclose a platform credential to repository-controlled hosts.
 # The container factory enables it only when it injects the complete commissioned pair.
 COPY qits-git-credential /usr/local/bin/qits-git-credential
-RUN chmod 0755 /usr/local/bin/qits-git-credential
+RUN chmod 0755 /usr/local/bin/qits-git-credential \
+    && sh -n /usr/local/bin/qits-git-credential \
+    # A workspace container carries QITS_TOKEN, forwarded by the edge, in preference to a
+    # commissioned pair to mint with — assert that branch answers straight from it rather than
+    # discovering a regression the first time a workspace clones over https.
+    && out=$(printf 'protocol=https\nhost=h\n\n' \
+         | QITS_TOKEN=t QITS_GIT_AUTH_HOST=h /usr/local/bin/qits-git-credential get) \
+    && case "$out" in \
+         *"password=t"*) ;; \
+         *) echo "qits-git-credential: QITS_TOKEN branch did not answer password=t" >&2; exit 1 ;; \
+       esac
 RUN printf '[credential]\n\thelper = /usr/local/bin/qits-git-credential\n' > /etc/qits-gitconfig
 # The same credential, for the hands that are not git: `qits-token <audience>` mints a bearer for one
 # platform service (the release door, qits-ci's run list, …). Inert without the injected
@@ -95,7 +105,11 @@ RUN printf '[credential]\n\thelper = /usr/local/bin/qits-git-credential\n' > /et
 # lockfile already names an address a workspace can reach, and nothing rewrites one.
 COPY qits-token /usr/local/bin/qits-token
 RUN chmod 0755 /usr/local/bin/qits-token \
-    && sh -n /usr/local/bin/qits-token
+    && sh -n /usr/local/bin/qits-token \
+    # QITS_TOKEN wins over the pair and the audience argument is ignored outright — assert it
+    # straight away rather than finding out via a 403 from the wrong audience.
+    && out=$(QITS_TOKEN=t /usr/local/bin/qits-token x) \
+    && [ "$out" = t ]
 # `ripgrep`/`fd-find` are general CLI tools (they benefit action scripts) and are also where kimi's
 # search tools resolve `rg`/`fd` on PATH — the pinned kimi installer below ships only the `kimi`
 # binary, not the sidekicks a desktop install carries. Debian names fd `fdfind`, which kimi handles.
@@ -309,12 +323,32 @@ RUN git config --system --add safe.directory '*'
 # not already have. If that judgement is ever revisited, libnss-wrapper is the alternative and the
 # profile snippet is the only caller to change.
 COPY qits-maven-settings.xml /etc/qits/maven-settings.xml
+# The QITS_TOKEN form of the same settings — a bearer header instead of the commissioned pair as
+# HTTP Basic, no username or password at all — which the profile snippet below picks in preference
+# to the pair's whenever a workspace carries a token. See the file's own header for the full
+# reasoning; it is otherwise byte-for-byte the pair settings.
+COPY qits-maven-settings-token.xml /etc/qits/maven-settings-token.xml
 COPY qits-workspace-profile.sh /etc/profile.d/qits-workspace.sh
-RUN chmod 0644 /etc/qits/maven-settings.xml /etc/profile.d/qits-workspace.sh \
+RUN chmod 0644 /etc/qits/maven-settings.xml /etc/qits/maven-settings-token.xml /etc/profile.d/qits-workspace.sh \
     && chmod g=u /etc/passwd \
     # A login shell must survive this file, so a syntax error has to break the BUILD, not every
     # command in every workspace: bash -n parses without executing.
-    && bash -n /etc/profile.d/qits-workspace.sh
+    && bash -n /etc/profile.d/qits-workspace.sh \
+    # QITS_TOKEN must win over the pair: assert the profile names the token settings rather than
+    # discovering at run time that a workspace token build is quietly sending the pair instead.
+    && out=$(QITS_TOKEN=t bash -c '. /etc/profile.d/qits-workspace.sh; echo $MAVEN_ARGS') \
+    && case "$out" in \
+         *maven-settings-token.xml*) ;; \
+         *) echo "qits-workspace-profile.sh: QITS_TOKEN did not select the token settings (MAVEN_ARGS=$out)" >&2; exit 1 ;; \
+       esac \
+    # Both settings files must be well-formed, and the token one must carry the httpHeaders block
+    # on both <server> entries — xmllint where the image has it (it does not, by default), a grep
+    # count otherwise.
+    && if command -v xmllint >/dev/null 2>&1; then \
+         xmllint --noout /etc/qits/maven-settings.xml /etc/qits/maven-settings-token.xml; \
+       else \
+         [ "$(grep -c '<httpHeaders>' /etc/qits/maven-settings-token.xml)" = 2 ]; \
+       fi
 
 # npm's registries, which the environment cannot fully carry. `npm_config_@qits:registry` is npm's
 # only spelling for the scope and is neither a POSIX env name (qits-containers refuses it,
