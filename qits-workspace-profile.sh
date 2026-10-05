@@ -44,14 +44,20 @@ QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central"
 export QITS_MAVEN_REPOSITORY_URL QITS_MAVEN_CENTRAL_URL
 unset qits_domain
 
-# INERT WITHOUT THE CREDENTIAL. Both hosts answer 401 anonymously, so routing Maven at them with no
-# commissioned pair to send would fail every build that stock Maven Central would have served; the
-# settings are applied only when the pair is there to authenticate with.
-if [ -n "${QITS_COMMISSIONED_CLIENT_ID:-}" ] && [ -n "${QITS_COMMISSIONED_CLIENT_SECRET:-}" ]; then
-  case " ${MAVEN_ARGS:-} " in
-    # A caller that named its own settings keeps them — a repository's own
-    # .qits-maven-settings.xml must still win when someone passes it.
-    *" -s "* | *" --settings "*) : ;;
-    *) MAVEN_ARGS="${MAVEN_ARGS:+$MAVEN_ARGS }-s /etc/qits/maven-settings.xml"; export MAVEN_ARGS ;;
-  esac
-fi
+# INERT WITHOUT A CREDENTIAL. Both hosts answer 401 anonymously, so routing Maven at them with
+# nothing to authenticate with would fail every build that stock Maven Central would have served;
+# the settings are applied only when there is something to send. QITS_TOKEN, where it is carried,
+# wins over the commissioned pair — maven-settings-token.xml sends it as a bearer header and never
+# mints — and the pair's own maven-settings.xml applies exactly as before where there is no token.
+case " ${MAVEN_ARGS:-} " in
+  # A caller that named its own settings keeps them — a repository's own
+  # .qits-maven-settings.xml must still win when someone passes it.
+  *" -s "* | *" --settings "*) : ;;
+  *)
+    if [ -n "${QITS_TOKEN:-}" ]; then
+      MAVEN_ARGS="${MAVEN_ARGS:+$MAVEN_ARGS }-s /etc/qits/maven-settings-token.xml"; export MAVEN_ARGS
+    elif [ -n "${QITS_COMMISSIONED_CLIENT_ID:-}" ] && [ -n "${QITS_COMMISSIONED_CLIENT_SECRET:-}" ]; then
+      MAVEN_ARGS="${MAVEN_ARGS:+$MAVEN_ARGS }-s /etc/qits/maven-settings.xml"; export MAVEN_ARGS
+    fi
+    ;;
+esac
