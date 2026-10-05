@@ -1,17 +1,18 @@
 #!/bin/sh
 # qits-token <audience> — print a bearer for one platform audience.
 #
-# Ask for qits-platform: the public edge forwards a bearer minted for that one audience to every
-# service behind it, so the same token reaches qits-projects' release door, qits-ci's run list, or
-# any other platform API —
+# Ask for qits-platform: present the result as a bearer to the public edge and it reaches every
+# service behind it —
 #
 #   curl -H "Authorization: Bearer $(qits-token qits-platform)" https://projects.qits.$QITS_DOMAIN/projects/api/…
 #
-# With QITS_TOKEN set (every workspace container carries one), this prints that token outright and
-# ignores the audience argument — the edge already forwards a qits-platform JWT, so there is
-# nothing left to mint. Otherwise it mints fresh from this container's commissioned client, one
-# call per audience named. Tokens are short-lived by the idp's TTL; mint/read at the call site
-# rather than caching.
+# A RUNNER workspace container carries QITS_TOKEN, its own opaque qits_tok_ token that
+# qits-workspaces mints and injects; a DIRECT container (admin, editor, today's regular rows)
+# carries the commissioned pair instead. With QITS_TOKEN set this prints it outright and ignores
+# the audience argument — there is nothing to mint, since QITS_TOKEN already works as a bearer:
+# present it and the edge introspects it, forwarding a short qits-platform JWT to the service
+# behind. Otherwise it mints fresh from the commissioned client, one call per audience named.
+# Tokens are short-lived by the idp's TTL; mint/read at the call site rather than caching.
 #
 # Loud when it cannot work, unlike the git helper: that one must stay silent so git falls through
 # to its next helper, this one is called by a person or an agent who needs to know why.

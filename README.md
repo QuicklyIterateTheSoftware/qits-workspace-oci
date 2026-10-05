@@ -89,11 +89,13 @@ including why it sits last.
 Both inert until qits-workspaces injects the environment they read, and both take **two** branches
 depending on what that environment carries:
 
-- With `QITS_TOKEN` set (every workspace container carries one, forwarded by the public edge): they
-  answer straight from it and never mint. `qits-git-credential` sends it as `password=`, exactly as
-  it would a minted one; `qits-token <audience>` prints it outright and ignores `<audience>` — the
-  edge already forwards a `qits-platform` JWT, which every service accepts, so there is nothing left
-  to mint and no point asking for one audience over another.
+- With `QITS_TOKEN` set — a RUNNER workspace container's own opaque `qits_tok_` token, minted and
+  injected by qits-workspaces; a DIRECT container (admin, editor, today's regular rows) carries the
+  pair instead and never sees it: they answer straight from it and never mint. `qits-git-credential`
+  sends it as `password=`, exactly as it would a minted one; `qits-token <audience>` prints it
+  outright and ignores `<audience>` — there is nothing to mint, since QITS_TOKEN already works as a
+  bearer: presented to the public edge, it is introspected there and a short `qits-platform` JWT is
+  forwarded on to the service behind.
 - Otherwise, the pair branch: a bearer minted from the container's commissioned client
   (`QITS_COMMISSIONED_CLIENT_ID` / `_SECRET`), posted to the idp with `client_secret_post` — the
   pair in the form body alongside `grant_type` and `audience`, never as HTTP Basic `-u`.

@@ -45,10 +45,12 @@
 # the credential never leaves for a registry that did not ask for it. One key per host, both
 # hosts, always https.
 #
-# QITS_TOKEN, WHERE IT IS CARRIED, WINS OVER THE PAIR. A workspace container holds a token
-# forwarded by the edge, not a pair to mint with, so there is nothing to base64: the bearer rides
-# npm's per-host `//<host>/:_authToken`, the same non-exportable shape as `_auth`, carrying the
-# token itself rather than `user:password`. Only one of the two keys is ever set for a host.
+# QITS_TOKEN, WHERE IT IS CARRIED, WINS OVER THE PAIR. A RUNNER workspace container holds its own
+# opaque qits_tok_ token, minted and injected by qits-workspaces, not a pair to mint with — so
+# there is nothing to base64: the bearer rides npm's per-host `//<host>/:_authToken`, the same
+# non-exportable shape as `_auth`, carrying the token itself rather than `user:password`. A DIRECT
+# container (admin, editor, today's regular rows) carries the pair instead and takes that branch
+# unchanged. Only one of the two keys is ever set for a host.
 #
 # Without either credential the registries are still set and no auth key is added; the hosts will
 # then refuse, which names the missing credential rather than hiding it behind a fallback. An
@@ -58,7 +60,7 @@ qits_hosted="registry.qits.$qits_domain"
 qits_proxy="mirror.qits.$qits_domain"
 set -- /usr/bin/npm "$@"
 if [ -n "${QITS_TOKEN:-}" ]; then
-  # A workspace container carries a token forwarded by the edge, not a pair to mint with: npm's
+  # A RUNNER workspace container carries its own opaque token, not a pair to mint with: npm's
   # per-host bearer key, `//<host>/:_authToken`, is exactly that — no base64, nothing to encode.
   set -- "npm_config_//$qits_hosted/:_authToken=$QITS_TOKEN" \
     "npm_config_//$qits_proxy/:_authToken=$QITS_TOKEN" "$@"

@@ -20,10 +20,11 @@
   also outranks Maven 3.8+'s plain-http blocker, which is why a pom's http default never trips it.)
 
   <servers> CARRY THE CONTAINER'S OWN IDENTITY. Both public hosts answer 401 anonymously and
-  accept a bearer in an Authorization header, forwarded from QITS_TOKEN by this file's
-  qits-workspace-profile.sh sibling — qits-maven-settings.xml (the commissioned-pair form) is
-  used instead when no QITS_TOKEN is carried; each server id is the id of the mirror it
-  authenticates, which is how Maven pairs them.
+  accept an Authorization header carrying QITS_TOKEN as a bearer — a RUNNER workspace container's
+  own opaque token, minted and injected by qits-workspaces; qits-maven-settings.xml (the
+  commissioned-pair form) is used instead on a DIRECT container, which carries the pair and no
+  QITS_TOKEN. Each server id is the id of the mirror it authenticates, which is how Maven pairs
+  them.
 -->
 <settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
