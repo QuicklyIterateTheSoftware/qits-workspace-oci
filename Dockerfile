@@ -77,10 +77,11 @@ RUN apt-get update \
 COPY qits-git-credential /usr/local/bin/qits-git-credential
 RUN chmod 0755 /usr/local/bin/qits-git-credential \
     && sh -n /usr/local/bin/qits-git-credential \
-    # A RUNNER workspace container carries QITS_TOKEN, its own opaque token minted and injected by
-    # qits-workspaces, in preference to a commissioned pair to mint with — assert that branch
-    # answers straight from it rather than discovering a regression the first time a workspace
-    # clones over https.
+    # A runner-placed workspace container carries QITS_TOKEN, its own opaque token minted and
+    # injected by qits-workspaces — and so does an admin or editor workspace container, even
+    # though those stay DIRECT-placed on qits-containers — in preference to a commissioned pair to
+    # mint with — assert that branch answers straight from it rather than discovering a regression
+    # the first time a workspace clones over https.
     && out=$(printf 'protocol=https\nhost=h\n\n' \
          | QITS_TOKEN=t QITS_GIT_AUTH_HOST=h /usr/local/bin/qits-git-credential get) \
     && case "$out" in \

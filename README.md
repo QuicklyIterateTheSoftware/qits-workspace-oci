@@ -89,9 +89,11 @@ including why it sits last.
 Both inert until qits-workspaces injects the environment they read, and both take **two** branches
 depending on what that environment carries:
 
-- With `QITS_TOKEN` set — a RUNNER workspace container's own opaque `qits_tok_` token, minted and
-  injected by qits-workspaces; a DIRECT container (admin, editor, today's regular rows) carries the
-  pair instead and never sees it: they answer straight from it and never mint. `qits-git-credential`
+- With `QITS_TOKEN` set — a runner-placed workspace container's own opaque `qits_tok_` token,
+  minted and injected by qits-workspaces, and an admin or editor workspace container's too, even
+  though those stay DIRECT-placed on qits-containers: they answer straight from it and never mint.
+  A container still holding the commissioned pair instead takes the branch below; that branch
+  remains until every container carries QITS_TOKEN (its removal is qits-876). `qits-git-credential`
   sends it as `password=`, exactly as it would a minted one; `qits-token <audience>` prints it
   outright and ignores `<audience>` — there is nothing to mint, since QITS_TOKEN already works as a
   bearer: presented to the public edge, it is introspected there and a short `qits-platform` JWT is
