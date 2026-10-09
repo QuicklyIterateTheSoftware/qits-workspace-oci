@@ -1,5 +1,5 @@
 # Sourced by every login shell (/etc/profile.d). The workspace daemon runs EVERY command it starts
-# as `bash -lc` — builds, actions, service supervision and both coding-agent harnesses — so this
+# as `bash -lc` — builds, actions and both coding-agent harnesses — so this
 # runs ahead of any build without this image owning an entrypoint and without a change to the
 # daemon that is PID 1.
 #
