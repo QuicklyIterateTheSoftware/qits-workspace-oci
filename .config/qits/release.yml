@@ -166,4 +166,5 @@ release:
         --root-name qits/workspace-base --root-version "$QITS_VERSION" \
         --dockerfile Dockerfile \
         --build-arg QITS_CLI_VERSION="$cli_version" \
+        --build-arg QITS_DOMAIN="$qits_domain" \
         -o sbom.json
