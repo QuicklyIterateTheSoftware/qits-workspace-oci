@@ -25,8 +25,13 @@
 #
 # ONE LINE, ONE VERSION TOKEN, AND A MACHINE EDITS IT: qits-maintenance reads literal
 # `ARG <NAME>=<image>:<tag>` defaults as docker pins and bumps the tag. Keep the value literal. The
-# registry host is the builder's to resolve (its registry config maps the edge spelling in-network).
-ARG BROWSER_BASE=registry.dev.localhost:8080/qits/build-images/node-browser-base:2026.1003.45515
+# registry host is the public edge name, registry.qits.$QITS_DOMAIN — an address any docker build
+# can pull on its own, not an in-network alias a builder's own registry config has to rewrite.
+#
+# The platform's public domain (qits-731). Global (declared before the first FROM) so BROWSER_BASE's
+# default can read it; the release recipes pass `--opt build-arg:QITS_DOMAIN`.
+ARG QITS_DOMAIN=wohlben.eu
+ARG BROWSER_BASE=registry.qits.${QITS_DOMAIN}/qits/build-images/node-browser-base:2026.1003.45515
 FROM ${BROWSER_BASE}
 
 ENV DEBIAN_FRONTEND=noninteractive

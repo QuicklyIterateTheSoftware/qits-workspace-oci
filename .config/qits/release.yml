@@ -95,6 +95,7 @@ release-request:
       buildctl build --frontend dockerfile.v0 \
         --local context=. --local dockerfile=. \
         --opt build-arg:QITS_CLI_VERSION="$cli_version" \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
         --output "type=image,name=$ref,push=true"
 
 release:
@@ -151,6 +152,7 @@ release:
       buildctl build --frontend dockerfile.v0 \
         --local context=. --local dockerfile=. \
         --opt build-arg:QITS_CLI_VERSION="$cli_version" \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
         --output "type=image,name=$ref,push=true"
       # THE SBOM GENERATOR DOES NOT NEED THE BUILD ARG TODAY, AND IS GIVEN IT ANYWAY. `qits-publish
       # sbom from-dockerfile` describes `FROM` lines: DockerfileSbom collects ARG defaults only to
