@@ -118,8 +118,8 @@ RUN chmod 0755 /usr/local/bin/qits-token \
     && out=$(QITS_TOKEN=t /usr/local/bin/qits-token x) \
     && [ "$out" = t ]
 # `ripgrep`/`fd-find` are general CLI tools (they benefit action scripts) and are also where kimi's
-# search tools resolve `rg`/`fd` on PATH — the pinned kimi installer below ships only the `kimi`
-# binary, not the sidekicks a desktop install carries. Debian names fd `fdfind`, which kimi handles.
+# search tools resolve `rg`/`fd` on PATH — the npm-installed kimi bundle below ships only the `kimi`
+# CLI itself, not the sidekicks a desktop install carries. Debian names fd `fdfind`, which kimi handles.
 
 # JDK 25 (Temurin, via the Adoptium apt repo). The projects this image builds — the Quarkus+Angular
 # fixture and qits itself — target `maven.compiler.release=25`, so JDK 17 (bookworm's default openjdk)
@@ -236,18 +236,31 @@ RUN curl -fsSL https://claude.ai/install.sh | bash -s ${CLAUDE_CODE_VERSION} \
 ENV DISABLE_AUTOUPDATER=1
 
 # Kimi Code CLI — the second coding-agent harness (the retired monolith's docs/epics/qits-coding-agents/feature-ideas/kimi-code-harness.md).
-# Same treatment as Claude Code: pinned version (KIMI_VERSION fails the build loudly on an unknown
-# version), installed system-wide via KIMI_INSTALL_DIR=/usr/local so the arbitrary runtime uid finds
-# it on PATH — the pinned installer drops only the `kimi` binary itself into bin/ (the ~/.kimi-code/bin
-# `rg`/`fd` sidekicks a desktop install carries are absent here; they come from the base apt layer
-# above instead). No shell-rc edits (KIMI_NO_MODIFY_PATH — /usr/local/bin is already on PATH) and the
-# update preflight is disabled (immutable image — bump the ARG to upgrade). The trailing `kimi
-# --version` turns a download failure into a loud build break: `curl … | bash` without pipefail would
-# otherwise swallow a curl error (bash reads empty stdin and exits 0), shipping an image with no kimi.
+# Installed from npm, not the vendor's own installer (code.kimi.com/kimi-code/install.sh): that host
+# resolves to a Volcengine anti-DDoS address this estate's egress cannot reach (qits-1520, since
+# 2026-10-23), so every cold build of this layer failed outright. The same vendor also publishes the
+# identical CLI as `@moonshot-ai/kimi-code` on npm — a trusted-publisher release built by GitHub
+# Actions in MoonshotAI/kimi-code, not a third-party mirror — so it is fetched the same way the
+# @playwright/mcp layer above is: `npm install -g` plus an exact-version check. The version is pinned
+# via the ARG below, same as Claude Code; the exact-match check makes a wrong or missing version fail
+# the build loudly rather than shipping a silent mismatch — a missing `kimi` fails the comparison on
+# its own, since the `kimi --version` capture itself fails first. npm 11 skips the package's own
+# postinstall script by default (its allowScripts policy); that's fine here, because all the script
+# does is rename a leftover Python `kimi` shim it finds on PATH out of the way. The optional dependency
+# node-pty does not install either — no prebuilt binary for this platform/Node combination, and no
+# compiler in this image to build one from source — which is also fine: node-pty is only lazily
+# imported by the package's web UI terminal, never by the headless agent this image runs, so there's
+# no reason to add build-essential just to satisfy it. `rg`/`fd` still come from the base apt layer
+# above (see the comment near the top of this file), not from the bundle, so it never reaches out to
+# code.kimi.com for them either. The update preflight is disabled (immutable image — bump the ARG to
+# upgrade).
 ARG KIMI_CODE_VERSION=0.28.1
-RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh \
-        | KIMI_VERSION=${KIMI_CODE_VERSION} KIMI_INSTALL_DIR=/usr/local KIMI_NO_MODIFY_PATH=1 bash \
-    && kimi --version
+RUN npm install -g @moonshot-ai/kimi-code@${KIMI_CODE_VERSION} \
+    && rm -rf /root/.npm \
+    && v="$(kimi --version)" \
+    && { [ "$v" = "${KIMI_CODE_VERSION}" ] || { \
+         echo "kimi --version printed '${v}', expected ${KIMI_CODE_VERSION}: npm install -g @moonshot-ai/kimi-code@${KIMI_CODE_VERSION} did not land the pinned release" >&2; \
+         exit 1; }; }
 ENV KIMI_CODE_NO_AUTO_UPDATE=1
 
 # Language servers for the coding agent's LSP plugins (jdtls-lsp / typescript-lsp from the
@@ -396,9 +409,9 @@ RUN chmod 0755 /usr/local/bin/npm \
 # belongs in the base rather than in three consuming Dockerfiles that would each pin it separately.
 #
 # THE BINARY ARRIVES WITH THE BUILD CONTEXT; THIS FILE ONLY COPIES IT. That is the part worth
-# reading twice, because the obvious recipe — a `curl` here, like the Claude Code, Kimi and jdtls
-# layers above — cannot work. Those three dial the OPEN INTERNET, and buildkitd can reach it; this
-# one would have to dial the PLATFORM, and .config/qits/release.yml says at length
+# reading twice, because the obvious recipe — a `curl` or `npm install` here, like the Claude Code,
+# Kimi and jdtls layers above — cannot work. Those three dial the OPEN INTERNET, and buildkitd can
+# reach it; this one would have to dial the PLATFORM, and .config/qits/release.yml says at length
 # that this build dials nothing on the platform: it runs in buildkitd's namespace on qits-net, with
 # no commissioned credential and no platform address anywhere in the recipe. Fixing that here means
 # a build arg for the store's URL and a secret mount for the credential, and a deliberately hermetic
