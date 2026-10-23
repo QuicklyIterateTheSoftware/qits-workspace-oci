@@ -31,7 +31,7 @@
 # The platform's public domain (qits-731). Global (declared before the first FROM) so BROWSER_BASE's
 # default can read it; the release recipes pass `--opt build-arg:QITS_DOMAIN`.
 ARG QITS_DOMAIN=wohlben.eu
-ARG BROWSER_BASE=registry.qits.${QITS_DOMAIN}/qits/build-images/node-browser-base:2026.1003.45515
+ARG BROWSER_BASE=registry.qits.${QITS_DOMAIN}/qits/build-images/node-browser-base:2026.1023.213508
 FROM ${BROWSER_BASE}
 
 ENV DEBIAN_FRONTEND=noninteractive
