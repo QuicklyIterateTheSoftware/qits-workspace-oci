@@ -74,29 +74,32 @@ RUN apt-get update \
         skopeo \
     && rm -rf /var/lib/apt/lists/*
 
-# Git invokes a credential helper for every HTTP remote it needs credentials for.  This one mints a
-# short-lived bearer from the per-workspace commissioned client, but answers ONLY the injected
-# qits-githost authority.  A checkout can contain arbitrary submodule remotes, so a generic helper
-# which answered those too would disclose a platform credential to repository-controlled hosts.
-# The container factory enables it only when it injects the complete commissioned pair.
+# Git invokes a credential helper for every HTTP remote it needs credentials for.  This one answers
+# with the workspace's own QITS_TOKEN, and ONLY for the injected qits-githost authority.  A checkout
+# can contain arbitrary submodule remotes, so a generic helper which answered those too would
+# disclose a platform credential to repository-controlled hosts.  Without QITS_TOKEN it answers
+# nothing at all, and git falls through to its next helper.
 COPY qits-git-credential /usr/local/bin/qits-git-credential
 RUN chmod 0755 /usr/local/bin/qits-git-credential \
     && sh -n /usr/local/bin/qits-git-credential \
     # A runner-placed workspace container carries QITS_TOKEN, its own opaque token minted and
     # injected by qits-workspaces — and so does an admin or editor workspace container, even
-    # though those stay DIRECT-placed on qits-containers — in preference to a commissioned pair to
-    # mint with — assert that branch answers straight from it rather than discovering a regression
-    # the first time a workspace clones over https.
+    # though those stay DIRECT-placed on qits-containers — assert the helper answers straight from
+    # it rather than discovering a regression the first time a workspace clones over https.
     && out=$(printf 'protocol=https\nhost=h\n\n' \
          | QITS_TOKEN=t QITS_GIT_AUTH_HOST=h /usr/local/bin/qits-git-credential get) \
     && case "$out" in \
          *"password=t"*) ;; \
          *) echo "qits-git-credential: QITS_TOKEN branch did not answer password=t" >&2; exit 1 ;; \
-       esac
+       esac \
+    # QITS_TOKEN is the only credential the helper knows: assert no client-credentials mint has
+    # come back into it (qits-876 retired the commissioned client pair).
+    && { ! grep -q -e QITS_COMMISSIONED_CLIENT -e client_credentials /usr/local/bin/qits-git-credential \
+         || { echo "qits-git-credential: the commissioned-pair mint is back" >&2; exit 1; }; }
 RUN printf '[credential]\n\thelper = /usr/local/bin/qits-git-credential\n' > /etc/qits-gitconfig
-# The same credential, for the hands that are not git: `qits-token <audience>` mints a bearer for one
-# platform service (the release door, qits-ci's run list, …). Inert without the injected
-# environment; it carries its reasoning in its header. It exists because an agent that could push,
+# The same credential, for the hands that are not git: `qits-token <audience>` prints the bearer for
+# a platform service (the release door, qits-ci's run list, …). Inert without the injected
+# QITS_TOKEN; it carries its reasoning in its header. It exists because an agent that could push,
 # build and test inside a workspace still could not release from it without reverse-engineering the
 # door (integrator.md, ad-hoc workspace 351, 2026-08-20).
 #
@@ -113,10 +116,16 @@ RUN printf '[credential]\n\thelper = /usr/local/bin/qits-git-credential\n' > /et
 COPY qits-token /usr/local/bin/qits-token
 RUN chmod 0755 /usr/local/bin/qits-token \
     && sh -n /usr/local/bin/qits-token \
-    # QITS_TOKEN wins over the pair and the audience argument is ignored outright — assert it
-    # straight away rather than finding out via a 403 from the wrong audience.
+    # QITS_TOKEN is printed and the audience argument is ignored outright — assert it straight away
+    # rather than finding out via a 403 from the wrong audience.
     && out=$(QITS_TOKEN=t /usr/local/bin/qits-token x) \
-    && [ "$out" = t ]
+    && [ "$out" = t ] \
+    # Without QITS_TOKEN it must refuse, and no client-credentials mint may have come back into it
+    # (qits-876 retired the commissioned client pair).
+    && { ! /usr/local/bin/qits-token x 2>/dev/null \
+         || { echo "qits-token: answered without QITS_TOKEN" >&2; exit 1; }; } \
+    && { ! grep -q -e QITS_COMMISSIONED_CLIENT -e client_credentials /usr/local/bin/qits-token \
+         || { echo "qits-token: the commissioned-pair mint is back" >&2; exit 1; }; }
 # `ripgrep`/`fd-find` are general CLI tools (they benefit action scripts) and are also where kimi's
 # search tools resolve `rg`/`fd` on PATH — the npm-installed kimi bundle below ships only the `kimi`
 # CLI itself, not the sidekicks a desktop install carries. Debian names fd `fdfind`, which kimi handles.
@@ -342,30 +351,36 @@ RUN git config --system --add safe.directory '*'
 # credential, and it mounts no docker socket, so in-container root grants no reach the session did
 # not already have. If that judgement is ever revisited, libnss-wrapper is the alternative and the
 # profile snippet is the only caller to change.
-COPY qits-maven-settings.xml /etc/qits/maven-settings.xml
-# The QITS_TOKEN form of the same settings — a bearer header instead of the commissioned pair as
-# HTTP Basic, no username or password at all — which the profile snippet below picks in preference
-# to the pair's whenever a workspace carries a token. See the file's own header for the full
-# reasoning; it is otherwise byte-for-byte the pair settings.
+# The settings carry QITS_TOKEN as a bearer header, no username or password at all, and the
+# profile snippet below applies them whenever a workspace carries a token. See the file's own header
+# for the full reasoning.
 COPY qits-maven-settings-token.xml /etc/qits/maven-settings-token.xml
 COPY qits-workspace-profile.sh /etc/profile.d/qits-workspace.sh
-RUN chmod 0644 /etc/qits/maven-settings.xml /etc/qits/maven-settings-token.xml /etc/profile.d/qits-workspace.sh \
+RUN chmod 0644 /etc/qits/maven-settings-token.xml /etc/profile.d/qits-workspace.sh \
     && chmod g=u /etc/passwd \
     # A login shell must survive this file, so a syntax error has to break the BUILD, not every
     # command in every workspace: bash -n parses without executing.
     && bash -n /etc/profile.d/qits-workspace.sh \
-    # QITS_TOKEN must win over the pair: assert the profile names the token settings rather than
-    # discovering at run time that a workspace token build is quietly sending the pair instead.
+    # QITS_TOKEN must select the token settings: assert the profile names them rather than
+    # discovering at run time that a workspace build is quietly going to stock Maven Central.
     && out=$(QITS_TOKEN=t bash -c '. /etc/profile.d/qits-workspace.sh; echo $MAVEN_ARGS') \
     && case "$out" in \
          *maven-settings-token.xml*) ;; \
          *) echo "qits-workspace-profile.sh: QITS_TOKEN did not select the token settings (MAVEN_ARGS=$out)" >&2; exit 1 ;; \
        esac \
-    # Both settings files must be well-formed, and the token one must carry the httpHeaders block
-    # on both <server> entries — xmllint where the image has it (it does not, by default), a grep
-    # count otherwise.
+    # QITS_TOKEN is the only credential the profile knows: a container holding a commissioned
+    # client pair and no token must get no settings at all (qits-876 retired the pair and its
+    # HTTP-Basic settings file, which must not come back either).
+    && out=$(env -u QITS_TOKEN -u MAVEN_ARGS QITS_COMMISSIONED_CLIENT_ID=i QITS_COMMISSIONED_CLIENT_SECRET=s \
+         bash -c '. /etc/profile.d/qits-workspace.sh; echo $MAVEN_ARGS') \
+    && { [ -z "$out" ] \
+         || { echo "qits-workspace-profile.sh: a commissioned pair selected settings (MAVEN_ARGS=$out)" >&2; exit 1; }; } \
+    && { [ ! -e /etc/qits/maven-settings.xml ] \
+         || { echo "/etc/qits/maven-settings.xml: the commissioned-pair settings are back" >&2; exit 1; }; } \
+    # The settings file must be well-formed and carry the httpHeaders block on both <server>
+    # entries — xmllint where the image has it (it does not, by default), a grep count otherwise.
     && if command -v xmllint >/dev/null 2>&1; then \
-         xmllint --noout /etc/qits/maven-settings.xml /etc/qits/maven-settings-token.xml; \
+         xmllint --noout /etc/qits/maven-settings-token.xml; \
        else \
          [ "$(grep -c '<httpHeaders>' /etc/qits/maven-settings-token.xml)" = 2 ]; \
        fi
@@ -383,15 +398,16 @@ RUN chmod 0644 /etc/qits/maven-settings.xml /etc/qits/maven-settings-token.xml /
 #
 # Both registries are code plus QITS_DOMAIN (qits-731): the @qits scope at
 # https://registry.qits.<domain>/artifacts/npm/npm/ and everything else through the npmjs cache at
-# https://mirror.qits.<domain>/npm/npmjs/. Both hosts want the container's commissioned client pair
-# as HTTP Basic, and npm's per-host `//<host>/:_auth` key is the same non-exportable kind of name as
-# the scope's, so the shim carries that too.
+# https://mirror.qits.<domain>/npm/npmjs/. Both hosts want the container's QITS_TOKEN as a bearer,
+# and npm's per-host `//<host>/:_authToken` key is the same non-exportable kind of name as the
+# scope's, so the shim carries that too.
 COPY qits-npm-shim.sh /usr/local/bin/npm
 RUN chmod 0755 /usr/local/bin/npm \
     && bash -n /usr/local/bin/npm \
-    # The credential is base64-encoded in the shim; coreutils is essential on Debian, but a shim that
-    # silently sends an empty `_auth` is a 401 far from its cause, so assert the tool is there.
-    && command -v base64 >/dev/null \
+    # QITS_TOKEN is the only credential the shim carries: assert the commissioned pair's HTTP-Basic
+    # `_auth` has not come back into it (qits-876 retired the pair).
+    && { ! grep -q -e QITS_COMMISSIONED_CLIENT -e ':_auth=' /usr/local/bin/npm \
+         || { echo "npm shim: the commissioned-pair _auth is back" >&2; exit 1; }; } \
     # The shim must sit AHEAD of the real npm, not behind it: if PATH ever puts /usr/bin first this
     # silently stops applying, and a workspace goes back to resolving @qits from the public
     # registry. Assert the resolution at build time rather than discovering it in a build log.
@@ -402,10 +418,9 @@ RUN chmod 0755 /usr/local/bin/npm \
 # `qits` is the platform's own command line, and it is the thing an agent should reach for before
 # either of the two shell helpers above: projects and repositories, tickets, epics, release requests,
 # CI runs and their logs, domain events, live telemetry, and `qits artifacts publish` for a CI step.
-# It needs no login here — inside a container it signs ITSELF in from the commissioned pair
-# ($QITS_COMMISSIONED_CLIENT_ID / $QITS_COMMISSIONED_CLIENT_SECRET) that qits-workspaces injects, so
-# there is nothing for a session to hand it and no token for an agent to hold. Every agent container
-# — workspace, editor, project-agent — is built FROM this image, which is the whole reason the binary
+# It needs no login here — inside a container it signs ITSELF in from the $QITS_TOKEN that
+# qits-workspaces injects, so there is nothing for a session to hand it. Every agent container —
+# workspace, editor, project-agent — is built FROM this image, which is the whole reason the binary
 # belongs in the base rather than in three consuming Dockerfiles that would each pin it separately.
 #
 # THE BINARY ARRIVES WITH THE BUILD CONTEXT; THIS FILE ONLY COPIES IT. That is the part worth
@@ -413,22 +428,21 @@ RUN chmod 0755 /usr/local/bin/npm \
 # Kimi and jdtls layers above — cannot work. Those three dial the OPEN INTERNET, and buildkitd can
 # reach it; this one would have to dial the PLATFORM, and .config/qits/release.yml says at length
 # that this build dials nothing on the platform: it runs in buildkitd's namespace on qits-net, with
-# no commissioned credential and no platform address anywhere in the recipe. Fixing that here means
+# no platform credential and no platform address anywhere in the recipe. Fixing that here means
 # a build arg for the store's URL and a secret mount for the credential, and a deliberately hermetic
 # build stops being one — a large change for one 42 MB file.
 #
 # That store is also gated, mostly. Measured 2026-09-14 against dev-qits-artifacts:8080:
 # `GET /artifacts/api/repositories/daemons/daemons` answers 401 with no token, 200 with a
-# `qits-platform` bearer, and 401 for HTTP basic with the commissioned pair; the single download URL
-# the recipes use answered 200 anonymously on the same day, and they send the bearer regardless —
-# the reasoning is beside the fetch, in both of them.
+# `qits-platform` bearer, and 401 for HTTP basic; the single download URL the recipes use answered
+# 200 anonymously on the same day, and they send the bearer regardless — the reasoning is beside
+# the fetch, in both of them.
 #
-# The CI STEP container already holds both halves — CiDaemonLauncher injects
-# QITS_COMMISSIONED_CLIENT_ID, QITS_COMMISSIONED_CLIENT_SECRET and QITS_GIT_AUTH_TOKEN_URL into
+# The CI STEP container already holds both halves — qits-ci injects the run's own QITS_TOKEN into
 # every step, and the recipe derives the artifacts store's address itself from QITS_DOMAIN
-# (qits-731; `wohlben.eu` where it is not injected) — so the STEP mints the bearer and fetches the
-# file, and `buildctl build --local context=.` sends it up with everything else. Both recipes carry
-# that fetch, byte for byte identical, exactly as their buildctl lines already are.
+# (qits-731; `wohlben.eu` where it is not injected) — so the STEP presents that bearer and fetches
+# the file, and `buildctl build --local context=.` sends it up with everything else. Both recipes
+# carry that fetch, byte for byte identical, exactly as their buildctl lines already are.
 #
 # THE VERSION IS NOT IN THIS FILE. It is a maven property pin — `qits.platform-access-cli-binary.version`
 # in this repository's `pom.xml`, on a dependency of `eu.wohlben.qits:qits-platform-access-cli-binary`

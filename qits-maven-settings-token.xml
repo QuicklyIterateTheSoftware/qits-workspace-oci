@@ -22,11 +22,9 @@
   <servers> CARRY THE CONTAINER'S OWN IDENTITY. Both public hosts answer 401 anonymously and
   accept an Authorization header carrying QITS_TOKEN as a bearer — a runner-placed workspace
   container's own opaque token, minted and injected by qits-workspaces, and an admin or editor
-  workspace container's too, even though those stay DIRECT-placed on qits-containers.
-  qits-maven-settings.xml (the commissioned-pair form) is used instead on a container still
-  carrying the pair and no QITS_TOKEN; that form remains until every container carries QITS_TOKEN
-  (its removal is qits-876). Each server id is the id of the mirror it authenticates, which is how
-  Maven pairs them.
+  workspace container's too, even though those stay DIRECT-placed on qits-containers. There is no
+  username or password at all. Each server id is the id of the mirror it authenticates, which is
+  how Maven pairs them.
 -->
 <settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"

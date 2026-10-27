@@ -8,13 +8,10 @@
 #
 # QITS_TOKEN, its own opaque qits_tok_ token that qits-workspaces mints and injects, is carried by
 # a runner-placed workspace container, and by an admin or editor workspace (DIRECT-placed on
-# qits-containers) as well. A container still holding the commissioned pair instead takes that
-# branch below; the pair branch remains until every container carries QITS_TOKEN (its removal is
-# qits-876). With QITS_TOKEN set this prints it outright and ignores the audience argument — there
-# is nothing to mint, since QITS_TOKEN already works as a bearer: present it and the edge
-# introspects it, forwarding a short qits-platform JWT to the service behind. Otherwise it mints
-# fresh from the commissioned client, one call per audience named. Tokens are short-lived by the
-# idp's TTL; mint/read at the call site rather than caching.
+# qits-containers) as well. This prints it outright and ignores the audience argument — there is
+# nothing to mint, since QITS_TOKEN already works as a bearer: present it and the edge introspects
+# it, forwarding a short qits-platform JWT to the service behind. Read it at the call site rather
+# than caching it.
 #
 # Loud when it cannot work, unlike the git helper: that one must stay silent so git falls through
 # to its next helper, this one is called by a person or an agent who needs to know why.
@@ -24,24 +21,8 @@ if [ -z "$audience" ]; then
   echo "usage: qits-token <audience>   (a platform audience, e.g. ${QITS_WORKSPACE_DAEMON_AUTH_AUDIENCE:-qits-platform})" >&2
   exit 2
 fi
-if [ -n "${QITS_TOKEN:-}" ]; then
-  printf %s "$QITS_TOKEN"
-  exit 0
-fi
-if [ -z "${QITS_COMMISSIONED_CLIENT_ID:-}" ] || [ -z "${QITS_COMMISSIONED_CLIENT_SECRET:-}" ]; then
-  echo "qits-token: this container carries no commissioned client (QITS_COMMISSIONED_CLIENT_ID/_SECRET unset)" >&2
+if [ -z "${QITS_TOKEN:-}" ]; then
+  echo "qits-token: this container carries no token (QITS_TOKEN unset)" >&2
   exit 1
 fi
-if [ -z "${QITS_GIT_AUTH_TOKEN_URL:-}" ]; then
-  echo "qits-token: no token endpoint (QITS_GIT_AUTH_TOKEN_URL unset)" >&2
-  exit 1
-fi
-response=$(curl -fsS --connect-timeout 2 --max-time 10 \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  --data-urlencode "client_id=$QITS_COMMISSIONED_CLIENT_ID" \
-  --data-urlencode "client_secret=$QITS_COMMISSIONED_CLIENT_SECRET" \
-  --data-urlencode "grant_type=client_credentials" \
-  --data-urlencode "audience=$audience" \
-  "$QITS_GIT_AUTH_TOKEN_URL") || { echo "qits-token: the idp refused the commissioned client for audience $audience" >&2; exit 1; }
-printf '%s' "$response" | jq -er '.access_token // empty' \
-  || { echo "qits-token: the idp answered without an access_token" >&2; exit 1; }
+printf %s "$QITS_TOKEN"

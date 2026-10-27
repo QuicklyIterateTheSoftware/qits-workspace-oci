@@ -34,46 +34,28 @@
 # commit one naming some other registry. Only the command line and the environment outrank it, so
 # nothing written to a file in HOME could win — and nothing here touches the disk at all.
 #
-# THE CREDENTIAL, BY THE SAME ROUTE. Both public hosts answer 401 anonymously. They accept HTTP
-# Basic with the container's own commissioned client pair (QITS_COMMISSIONED_CLIENT_ID / _SECRET,
-# the identity every agent container already carries), which is exactly npm's per-registry `_auth`
-# (base64 of `user:password`). npm keys that by "nerf-dart", `//<host>/:_auth`, and its environment
-# form `npm_config_//<host>/:_auth` is the same kind of name as the scope's — `/` and `:` in it, no
-# shell can export it — so it rides the same `env` exec. npm looks a request's credential up by
-# walking its URL's path back towards the host, so a host-level key covers every packument and
-# tarball that host serves (a lockfile's `resolved` URLs included) and nothing on any other host:
-# the credential never leaves for a registry that did not ask for it. One key per host, both
-# hosts, always https.
+# THE CREDENTIAL, BY THE SAME ROUTE. Both public hosts answer 401 anonymously. They accept the
+# container's own opaque qits_tok_ token, QITS_TOKEN — minted and injected by qits-workspaces into a
+# runner-placed workspace container, and into an admin or editor workspace (DIRECT-placed on
+# qits-containers) as well — as a bearer, which is exactly npm's per-registry `_authToken`. There
+# is nothing to base64 and nothing to encode: the key carries the token itself. npm keys it by
+# "nerf-dart", `//<host>/:_authToken`, and its environment form `npm_config_//<host>/:_authToken`
+# is the same kind of name as the scope's — `/` and `:` in it, no shell can export it — so it rides
+# the same `env` exec. npm looks a request's credential up by walking its URL's path back towards
+# the host, so a host-level key covers every packument and tarball that host serves (a lockfile's
+# `resolved` URLs included) and nothing on any other host: the credential never leaves for a
+# registry that did not ask for it. One key per host, both hosts, always https.
 #
-# QITS_TOKEN, WHERE IT IS CARRIED, WINS OVER THE PAIR. A runner-placed workspace container holds
-# its own opaque qits_tok_ token, minted and injected by qits-workspaces, not a pair to mint with —
-# so there is nothing to base64: the bearer rides npm's per-host `//<host>/:_authToken`, the same
-# non-exportable shape as `_auth`, carrying the token itself rather than `user:password`. An admin
-# or editor workspace (DIRECT-placed on qits-containers) carries QITS_TOKEN too; a container still
-# holding the commissioned pair instead takes that branch unchanged, and that branch remains until
-# every container carries QITS_TOKEN (its removal is qits-876). Only one of the two keys is ever
-# set for a host.
-#
-# Without either credential the registries are still set and no auth key is added; the hosts will
-# then refuse, which names the missing credential rather than hiding it behind a fallback. An
-# explicit `--registry` on the command line still outranks all of this, as npm intends.
+# Without QITS_TOKEN the registries are still set and no auth key is added; the hosts will then
+# refuse, which names the missing credential rather than hiding it behind a fallback. An explicit
+# `--registry` on the command line still outranks all of this, as npm intends.
 qits_domain=${QITS_DOMAIN:-wohlben.eu}
 qits_hosted="registry.qits.$qits_domain"
 qits_proxy="mirror.qits.$qits_domain"
 set -- /usr/bin/npm "$@"
 if [ -n "${QITS_TOKEN:-}" ]; then
-  # A runner-placed or admin/editor workspace container carries its own opaque token, not a pair
-  # to mint with: npm's per-host bearer key, `//<host>/:_authToken`, is exactly that — no base64,
-  # nothing to encode.
   set -- "npm_config_//$qits_hosted/:_authToken=$QITS_TOKEN" \
     "npm_config_//$qits_proxy/:_authToken=$QITS_TOKEN" "$@"
-elif [ -n "${QITS_COMMISSIONED_CLIENT_ID:-}" ] && [ -n "${QITS_COMMISSIONED_CLIENT_SECRET:-}" ]; then
-  # `tr`, not `base64 -w0`: GNU wraps at 76 columns and a long secret would put a newline in the
-  # value; stripping it works on every base64 there is.
-  qits_auth=$(printf '%s:%s' "$QITS_COMMISSIONED_CLIENT_ID" "$QITS_COMMISSIONED_CLIENT_SECRET" \
-    | base64 | tr -d '\n')
-  set -- "npm_config_//$qits_hosted/:_auth=$qits_auth" \
-    "npm_config_//$qits_proxy/:_auth=$qits_auth" "$@"
 fi
 exec env \
   "npm_config_registry=https://$qits_proxy/npm/npmjs/" \

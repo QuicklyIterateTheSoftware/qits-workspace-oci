@@ -27,9 +27,9 @@ fi
 
 # --- 2. point Maven at the platform's repositories ------------------------------------------------
 # Every qits pom declares its platform repository as `qits-maven`, with a developer-host default
-# address that does not exist inside a container; /etc/qits/maven-settings.xml mirrors that id to
-# qits-artifacts' hosted maven, routes Maven Central through qits-mirror's cache, and sends the
-# container's commissioned client pair to both as HTTP Basic. MAVEN_ARGS (Maven 3.9+) applies it to
+# address that does not exist inside a container; /etc/qits/maven-settings-token.xml mirrors that
+# id to qits-artifacts' hosted maven, routes Maven Central through qits-mirror's cache, and sends
+# the container's own QITS_TOKEN to both as a bearer header. MAVEN_ARGS (Maven 3.9+) applies it to
 # `./mvnw` as well as `mvn`, which matters because every repository here builds through its wrapper.
 #
 # THE ADDRESSES ARE CODE, NOT CONFIGURATION (qits-731). The platform's only input is QITS_DOMAIN;
@@ -46,9 +46,9 @@ unset qits_domain
 
 # INERT WITHOUT A CREDENTIAL. Both hosts answer 401 anonymously, so routing Maven at them with
 # nothing to authenticate with would fail every build that stock Maven Central would have served;
-# the settings are applied only when there is something to send. QITS_TOKEN, where it is carried,
-# wins over the commissioned pair — maven-settings-token.xml sends it as a bearer header and never
-# mints — and the pair's own maven-settings.xml applies exactly as before where there is no token.
+# the settings are applied only when there is something to send: QITS_TOKEN, which
+# maven-settings-token.xml sends as a bearer header and never mints. Without it Maven is left on
+# stock Maven Central.
 case " ${MAVEN_ARGS:-} " in
   # A caller that named its own settings keeps them — a repository's own
   # .qits-maven-settings.xml must still win when someone passes it.
@@ -56,8 +56,6 @@ case " ${MAVEN_ARGS:-} " in
   *)
     if [ -n "${QITS_TOKEN:-}" ]; then
       MAVEN_ARGS="${MAVEN_ARGS:+$MAVEN_ARGS }-s /etc/qits/maven-settings-token.xml"; export MAVEN_ARGS
-    elif [ -n "${QITS_COMMISSIONED_CLIENT_ID:-}" ] && [ -n "${QITS_COMMISSIONED_CLIENT_SECRET:-}" ]; then
-      MAVEN_ARGS="${MAVEN_ARGS:+$MAVEN_ARGS }-s /etc/qits/maven-settings.xml"; export MAVEN_ARGS
     fi
     ;;
 esac

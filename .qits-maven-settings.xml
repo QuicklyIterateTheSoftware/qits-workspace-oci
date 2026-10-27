@@ -29,15 +29,15 @@
     </mirror>
   </mirrors>
   <servers>
-    <!-- BuildKit supplies the commissioned CI client only for the Maven build instruction. -->
+    <!-- qits-ci puts the run's own credential in QITS_MAVEN_AUTH_USR/PSW: its token subject and
+         token (qits-443). -->
     <server>
       <id>qits-maven-network</id>
       <username>${env.QITS_MAVEN_AUTH_USR}</username>
       <password>${env.QITS_MAVEN_AUTH_PSW}</password>
     </server>
-    <!-- Same commissioned credential, for the Central cache: both hosts answer 401 anonymously, so
-         every build that resolves through them needs it. Both variables are the BuildKit secret
-         mounts on docker/Dockerfile's mvnw RUN, as for qits-maven-network. -->
+    <!-- The same credential, for the Central cache: both hosts answer 401 anonymously, so every
+         build that resolves through them needs it. -->
     <server>
       <id>qits-central-proxy</id>
       <username>${env.QITS_MAVEN_AUTH_USR}</username>

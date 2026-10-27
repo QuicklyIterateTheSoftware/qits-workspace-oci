@@ -49,9 +49,9 @@ itself; the Dockerfile takes it as a build arg with no default). It is what an a
 should reach for first: projects and repositories, tickets, epics, release requests, CI runs and
 their logs, domain events, live telemetry, and `qits artifacts publish` from a CI step.
 
-**There is no login.** Inside a container the CLI signs itself in from the commissioned pair
-qits-workspaces injects (`QITS_COMMISSIONED_CLIENT_ID` / `QITS_COMMISSIONED_CLIENT_SECRET`), so it
-acts as the container's **own agent identity** and never as the operator. That identity reads: the
+**There is no login.** Inside a container the CLI signs itself in from the `QITS_TOKEN`
+qits-workspaces injects, so it acts as the container's **own agent identity** and never as the
+operator. That identity reads: the
 reads work, and a write only an operator may make answers **403**. A 403 from `qits` is the platform
 saying "not this identity", not a broken install.
 
@@ -75,8 +75,8 @@ it rotted on a clock and killed the release pipeline with a 404 twice in three d
 comment and the `Dockerfile` block at the foot of the file carry the argument.
 
 The binary is **not fetched by the Dockerfile**. This build dials nothing on the platform, and the
-artifacts store is not anonymous, so the CI **step** container — which holds the commissioned pair
-and the store's address — fetches the file into the build context and the Dockerfile only `COPY`s it.
+artifacts store is not anonymous, so the CI **step** container — which holds the run's own
+`QITS_TOKEN` and the store's address — fetches the file into the build context and the Dockerfile only `COPY`s it.
 Both recipes in `.config/qits/release.yml` carry that fetch, byte for byte identical; both read the
 version out of the pom property and pass it to buildctl as `--opt build-arg:QITS_CLI_VERSION=`, and
 both run `./mvnw -B -ntp verify` first, which resolves the pinned jar and does nothing else — so a pin
@@ -86,37 +86,27 @@ including why it sits last.
 
 ### Two shell helpers, older than the CLI and not retired by it
 
-Both inert until qits-workspaces injects the environment they read, and both take **two** branches
-depending on what that environment carries:
-
-- With `QITS_TOKEN` set — a runner-placed workspace container's own opaque `qits_tok_` token,
-  minted and injected by qits-workspaces, and an admin or editor workspace container's too, even
-  though those stay DIRECT-placed on qits-containers: they answer straight from it and never mint.
-  A container still holding the commissioned pair instead takes the branch below; that branch
-  remains until every container carries QITS_TOKEN (its removal is qits-876). `qits-git-credential`
-  sends it as `password=`, exactly as it would a minted one; `qits-token <audience>` prints it
-  outright and ignores `<audience>` — there is nothing to mint, since QITS_TOKEN already works as a
-  bearer: presented to the public edge, it is introspected there and a short `qits-platform` JWT is
-  forwarded on to the service behind.
-- Otherwise, the pair branch: a bearer minted from the container's commissioned client
-  (`QITS_COMMISSIONED_CLIENT_ID` / `_SECRET`), posted to the idp with `client_secret_post` — the
-  pair in the form body alongside `grant_type` and `audience`, never as HTTP Basic `-u`.
-
-In full:
+Both inert until qits-workspaces injects `QITS_TOKEN` — a runner-placed workspace container's own
+opaque `qits_tok_` token, and an admin or editor workspace container's too, even though those stay
+DIRECT-placed on qits-containers. They answer straight from it and never mint: there is nothing to
+mint, since `QITS_TOKEN` already works as a bearer — presented to the public edge, it is
+introspected there and a short `qits-platform` JWT is forwarded on to the service behind.
 
 - `qits-git-credential` — git's credential helper, answering the injected githost authority with
-  either branch above (and nothing else: a checkout can name arbitrary submodule remotes). Silent
-  and exit 0 on every failure, so git falls through to its next helper.
-- `qits-token <audience>` — the same two branches, for the hands that are not git: qits-projects'
-  release requests, the ci run list, any platform API. Ask for `qits-platform`; loud on failure,
-  unlike the git helper, since a person or an agent calling it needs to know why.
+  `username=oauth2` and the token as `password=` (and nothing else: a checkout can name arbitrary
+  submodule remotes). Silent and exit 0 on every failure, a missing token included, so git falls
+  through to its next helper.
+- `qits-token <audience>` — the same token, for the hands that are not git: qits-projects' release
+  requests, the ci run list, any platform API. It prints `QITS_TOKEN` outright and ignores
+  `<audience>`; ask for `qits-platform`. Loud on failure (exit 1 without a token), unlike the git
+  helper, since a person or an agent calling it needs to know why.
 
 `npm` itself is a shim that points npm at the platform's registries and authenticates to them. The
 addresses are code plus `QITS_DOMAIN` (falling back to `wohlben.eu`), never injected URLs: the
 `@qits` scope at `https://registry.qits.<domain>/artifacts/npm/npm/` and everything else through the
 npmjs cache at `https://mirror.qits.<domain>/npm/npmjs/`. With `QITS_TOKEN` set it carries that as a
-per-host `_authToken`; otherwise an `_auth` for both hosts from the container's commissioned client
-pair, which they accept as HTTP Basic (see the shim's header). A lockfile written against those
+per-host `_authToken` for both hosts; without it no auth key is added and the hosts refuse (see the
+shim's header). A lockfile written against those
 names resolves everywhere, so a plain `npm ci` works and nothing rewrites a lockfile.
 
 Plus `/etc/profile.d/qits-workspace.sh` for every login shell: a passwd entry for the arbitrary uid,
@@ -124,11 +114,10 @@ and the Maven settings that send the `qits-maven` repository to
 `https://registry.qits.<domain>/artifacts/maven/maven` and Maven Central through the cache at
 `https://mirror.qits.<domain>/mirror/maven/central`. With `QITS_TOKEN` set the profile applies
 `/etc/qits/maven-settings-token.xml`, whose two `<server>` entries carry the token as an
-`Authorization: Bearer` header and no username or password; otherwise it applies
-`/etc/qits/maven-settings.xml`, authenticated with the commissioned client pair, exactly as before.
-A caller that already passes its own `-s`/`--settings` keeps it either way. The profile derives the
-two mirror URLs from `QITS_DOMAIN` and exports them for whichever settings file is applied to read;
-nothing injects them.
+`Authorization: Bearer` header and no username or password; without it no settings are applied and
+Maven stays on stock Maven Central. A caller that already passes its own `-s`/`--settings` keeps it
+either way. The profile derives the two mirror URLs from `QITS_DOMAIN` and exports them for the
+settings file to read; nothing injects them.
 
 ## Building by hand
 
@@ -151,8 +140,7 @@ rather than with maven because the step image has no JDK in it.
 
 That download URL answered 200 without a token when it was last measured (2026-09-14) and its
 neighbour — the daemon list API — answered 401, so send the bearer and do not build a habit on the
-open door. Inside a step container the recipes mint it from the commissioned pair at
-`$QITS_GIT_AUTH_TOKEN_URL` (`grant_type=client_credentials&audience=qits-platform`); from your own
+open door. Inside a step container the recipes send the run's own `$QITS_TOKEN`; from your own
 machine, `qits login` with an already-installed CLI is the easier road. The fetched file is
 gitignored, so it never lands in a commit.
 
