@@ -97,11 +97,11 @@ RUN chmod 0755 /usr/local/bin/qits-git-credential \
     && { ! grep -q -e QITS_COMMISSIONED_CLIENT -e client_credentials /usr/local/bin/qits-git-credential \
          || { echo "qits-git-credential: the commissioned-pair mint is back" >&2; exit 1; }; }
 RUN printf '[credential]\n\thelper = /usr/local/bin/qits-git-credential\n' > /etc/qits-gitconfig
-# The same credential, for the hands that are not git: `qits-token <audience>` prints the bearer for
-# a platform service (the release door, qits-ci's run list, …). Inert without the injected
-# QITS_TOKEN; it carries its reasoning in its header. It exists because an agent that could push,
-# build and test inside a workspace still could not release from it without reverse-engineering the
-# door (integrator.md, ad-hoc workspace 351, 2026-08-20).
+# The same credential, for the hands that are not git: `qits-token` prints the bearer for a platform
+# service (the release door, qits-ci's run list, …). Inert without the injected QITS_TOKEN; it
+# carries its reasoning in its header. It exists because an agent that could push, build and test
+# inside a workspace still could not release from it without reverse-engineering the door
+# (integrator.md, ad-hoc workspace 351, 2026-08-20).
 #
 # THESE TWO EXIST BECAUSE THERE WAS NO CLI, AND THERE IS ONE NOW: `qits`, at the foot of this file.
 # It is what an agent should reach for first, and the block down there says why it sits last rather
