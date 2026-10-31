@@ -96,10 +96,11 @@ introspected there and a short `qits-platform` JWT is forwarded on to the servic
   `username=oauth2` and the token as `password=` (and nothing else: a checkout can name arbitrary
   submodule remotes). Silent and exit 0 on every failure, a missing token included, so git falls
   through to its next helper.
-- `qits-token <audience>` — the same token, for the hands that are not git: qits-projects' release
-  requests, the ci run list, any platform API. It prints `QITS_TOKEN` outright and ignores
-  `<audience>`; ask for `qits-platform`. Loud on failure (exit 1 without a token), unlike the git
-  helper, since a person or an agent calling it needs to know why.
+- `qits-token` — the same token, for the hands that are not git: qits-projects' release
+  requests, the ci run list, any platform API. It prints `QITS_TOKEN` outright; there is only one
+  audience, `qits-platform`, so it takes no argument (an old caller's audience positional is still
+  accepted and ignored). Loud on failure (exit 1 without a token), unlike the git helper, since a
+  person or an agent calling it needs to know why.
 
 `npm` itself is a shim that points npm at the platform's registries and authenticates to them. The
 addresses are code plus `QITS_DOMAIN` (falling back to `wohlben.eu`), never injected URLs: the

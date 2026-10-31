@@ -1,26 +1,22 @@
 #!/bin/sh
-# qits-token <audience> — print a bearer for one platform audience.
+# qits-token — print a bearer for the platform audience.
 #
-# Ask for qits-platform: present the result as a bearer to the public edge and it reaches every
-# service behind it —
+# Present the result as a bearer to the public edge and it reaches every service behind it —
 #
-#   curl -H "Authorization: Bearer $(qits-token qits-platform)" https://projects.qits.$QITS_DOMAIN/projects/api/…
+#   curl -H "Authorization: Bearer $(qits-token)" https://projects.qits.$QITS_DOMAIN/projects/api/…
 #
 # QITS_TOKEN, its own opaque qits_tok_ token that qits-workspaces mints and injects, is carried by
 # a runner-placed workspace container, and by an admin or editor workspace (DIRECT-placed on
-# qits-containers) as well. This prints it outright and ignores the audience argument — there is
-# nothing to mint, since QITS_TOKEN already works as a bearer: present it and the edge introspects
-# it, forwarding a short qits-platform JWT to the service behind. Read it at the call site rather
-# than caching it.
+# qits-containers) as well. This prints it outright — there is nothing to mint, since QITS_TOKEN
+# already works as a bearer: present it and the edge introspects it, forwarding a short
+# qits-platform JWT to the service behind. Read it at the call site rather than caching it.
+#
+# Takes no argument. An old caller's audience positional is still accepted and ignored, since
+# there was only ever one audience to ask for.
 #
 # Loud when it cannot work, unlike the git helper: that one must stay silent so git falls through
 # to its next helper, this one is called by a person or an agent who needs to know why.
 set -eu
-audience=${1:-}
-if [ -z "$audience" ]; then
-  echo "usage: qits-token <audience>   (a platform audience, e.g. ${QITS_WORKSPACE_DAEMON_AUTH_AUDIENCE:-qits-platform})" >&2
-  exit 2
-fi
 if [ -z "${QITS_TOKEN:-}" ]; then
   echo "qits-token: this container carries no token (QITS_TOKEN unset)" >&2
   exit 1
