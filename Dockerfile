@@ -163,6 +163,19 @@ ENV QUARKUS_ANALYTICS_DISABLED=true
 # disables it non-interactively for every Angular build (Quinoa's frontend build + fixture builds).
 ENV NG_CLI_ANALYTICS=false
 
+# Every frontend's `ng test` runs the @angular/build:unit-test builder, i.e. vitest. A one-shot run
+# (no TTY, so watch is off) forks os.availableParallelism() - 1 workers; the container has no CPU
+# quota, so that is the host's CPU count minus one: 11 on the 12-CPU host. Each worker loads its
+# own jsdom, about 250 MB. Measured in a workspace for qits-1817: qits-ci-frontend's one-shot
+# `ng test` took ~3.2 GB of anonymous memory with 11 workers against the workspace's 4 GB memory
+# limit, and ~1.2 GB with 2 workers (it ran faster too). Over the limit, the kernel OOM-kills the
+# `ng` process or the agent session (`claude`) itself. Vitest reads VITEST_MAX_WORKERS when it
+# resolves its config, so this caps every `ng test` in every repository without touching
+# package.json or angular.json; an explicit --max-workers still wins. Note that the OOM log names
+# the `ng` process `ng test --watch` even for `--watch=false`: the kernel keeps 15 characters of
+# the process title. Workers show as `MainThread`.
+ENV VITEST_MAX_WORKERS=2
+
 # Node.js comes from the base (NodeSource, Node 24, corepack enabled); pnpm through corepack.
 RUN corepack prepare pnpm@latest --activate
 
