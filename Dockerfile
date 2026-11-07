@@ -421,6 +421,11 @@ RUN chmod 0755 /usr/local/bin/npm \
     # `_auth` has not come back into it (qits-876 retired the pair).
     && { ! grep -q -e QITS_COMMISSIONED_CLIENT -e ':_auth=' /usr/local/bin/npm \
          || { echo "npm shim: the commissioned-pair _auth is back" >&2; exit 1; }; } \
+    # A host-level _authToken alone loses to a path-level key in a lower layer (qits-1918): assert
+    # the shim still carries both registries' path-level keys alongside the host-level ones.
+    && { grep -qF '/artifacts/npm/npm/:_authToken=' /usr/local/bin/npm \
+         && grep -qF '/npm/npmjs/:_authToken=' /usr/local/bin/npm \
+         || { echo "npm shim: the path-level _authToken keys are gone (qits-1918)" >&2; exit 1; }; } \
     # The shim must sit AHEAD of the real npm, not behind it: if PATH ever puts /usr/bin first this
     # silently stops applying, and a workspace goes back to resolving @qits from the public
     # registry. Assert the resolution at build time rather than discovering it in a build log.

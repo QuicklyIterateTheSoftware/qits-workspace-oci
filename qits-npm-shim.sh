@@ -44,7 +44,17 @@
 # the same `env` exec. npm looks a request's credential up by walking its URL's path back towards
 # the host, so a host-level key covers every packument and tarball that host serves (a lockfile's
 # `resolved` URLs included) and nothing on any other host: the credential never leaves for a
-# registry that did not ask for it. One key per host, both hosts, always https.
+# registry that did not ask for it. TWO KEYS PER HOST, not one: the host-level key above, plus a
+# second, path-level key scoped to this registry's own path (`/artifacts/npm/npm/` on the hosted
+# side, `/npm/npmjs/` on the proxy side). npm does not pick the key by layer first — env over user
+# over global — it picks by SPECIFICITY first, the longest path prefix of the request URL that has
+# a key in ANY layer, and only breaks a tie between two equally specific keys by layer. A
+# hand-written path-level key sitting in a lower layer — a stale token written into a shared
+# HOME's ~/.npmrc, which is exactly what every agent container's /claude-home can carry (qits-1918)
+# — therefore outranks this env's host-level key outright, because it is the more specific of the
+# two, not because it loses on layer. Carrying the path-level key too, at the same env layer and
+# the same token, closes that: it is then at least as specific as anything a lower layer could
+# define at this path, so the container's own token wins regardless of what HOME has lying around.
 #
 # Without QITS_TOKEN the registries are still set and no auth key is added; the hosts will then
 # refuse, which names the missing credential rather than hiding it behind a fallback. An explicit
@@ -55,7 +65,9 @@ qits_proxy="mirror.qits.$qits_domain"
 set -- /usr/bin/npm "$@"
 if [ -n "${QITS_TOKEN:-}" ]; then
   set -- "npm_config_//$qits_hosted/:_authToken=$QITS_TOKEN" \
-    "npm_config_//$qits_proxy/:_authToken=$QITS_TOKEN" "$@"
+    "npm_config_//$qits_proxy/:_authToken=$QITS_TOKEN" \
+    "npm_config_//$qits_hosted/artifacts/npm/npm/:_authToken=$QITS_TOKEN" \
+    "npm_config_//$qits_proxy/npm/npmjs/:_authToken=$QITS_TOKEN" "$@"
 fi
 exec env \
   "npm_config_registry=https://$qits_proxy/npm/npmjs/" \
