@@ -409,6 +409,11 @@ RUN chmod 0644 /etc/qits/maven-settings-token.xml /etc/profile.d/qits-workspace.
 # spawns it straight from the Maven JVM, so a shell function or alias would miss exactly the builds
 # that matter most.
 #
+# It shadows `npx` too (qits-2254), via a symlink to the same script: /usr/bin/npx is the real npm's
+# own npx-cli.js, a separate executable that bypassed the npm shim entirely, so a fetching npx inside
+# a repository whose project .npmrc names the platform hosts went out with no credential and answered
+# E401. The symlink keeps the invoked name, which is how the shim tells npm and npx apart.
+#
 # Both registries are code plus QITS_DOMAIN (qits-731): the @qits scope at
 # https://registry.qits.<domain>/artifacts/npm/npm/ and everything else through the npmjs cache at
 # https://mirror.qits.<domain>/npm/npmjs/. Both hosts want the container's QITS_TOKEN as a bearer,
@@ -416,6 +421,7 @@ RUN chmod 0644 /etc/qits/maven-settings-token.xml /etc/profile.d/qits-workspace.
 # scope's, so the shim carries that too.
 COPY qits-npm-shim.sh /usr/local/bin/npm
 RUN chmod 0755 /usr/local/bin/npm \
+    && ln -s npm /usr/local/bin/npx \
     && bash -n /usr/local/bin/npm \
     # QITS_TOKEN is the only credential the shim carries: assert the commissioned pair's HTTP-Basic
     # `_auth` has not come back into it (qits-876 retired the pair).
@@ -430,7 +436,14 @@ RUN chmod 0755 /usr/local/bin/npm \
     # silently stops applying, and a workspace goes back to resolving @qits from the public
     # registry. Assert the resolution at build time rather than discovering it in a build log.
     && [ "$(command -v npm)" = /usr/local/bin/npm ] \
-    && [ -x /usr/bin/npm ]
+    && [ -x /usr/bin/npm ] \
+    # npx gets the same treatment as npm, by the same symlink: assert it resolves ahead of the real
+    # npx and that the real binary is still there underneath for the shim to exec (qits-2254).
+    && [ "$(command -v npx)" = /usr/local/bin/npx ] && [ "$(readlink /usr/local/bin/npx)" = npm ] && [ -x /usr/bin/npx ] \
+    # And assert the shim itself still routes an npx invocation to the real npx rather than falling
+    # through to npm's own default — the one line that makes the symlink above actually do its job.
+    && { grep -qF 'npx) qits_real=/usr/bin/npx' /usr/local/bin/npm \
+         || { echo "npm shim: npx is no longer routed to the real npx (qits-2254)" >&2; exit 1; }; }
 
 # ---- the qits CLI, on PATH in every agent container ------------------------------------------
 # `qits` is the platform's own command line, and it is the thing an agent should reach for before

@@ -1,6 +1,15 @@
 #!/bin/sh
-# npm, pointed at the platform's two npm registries and carrying the container's credential for
-# both of them.
+# npm and npx, pointed at the platform's two npm registries and carrying the container's credential
+# for both of them.
+#
+# WHY NPX TOO (qits-2254). /usr/bin/npx is the real npm's npx-cli.js, a separate executable that
+# bypasses this shim entirely when it is the only one shadowed. A fetching npx run inside a
+# repository whose project .npmrc names the platform hosts therefore went out with no credential and
+# answered E401. This same file is installed as /usr/local/bin/npx too (a symlink to this script
+# keeps the invoked name, which is how it tells which real binary to run below), so npx now carries
+# the same registries and tokens npm does. One more thing follows from that: a workspace never needs
+# a token file at all — no ~/.npmrc (HOME is shared across every agent container, qits-1918) and no
+# NPM_CONFIG_USERCONFIG pointing somewhere else — because npm and npx on PATH already carry it.
 #
 # THE ADDRESSES ARE CODE, NOT CONFIGURATION. The platform's only input is QITS_DOMAIN, the bare
 # public domain; the hosts and paths below are constants of the platform (qits-731), the same ones
@@ -62,7 +71,11 @@
 qits_domain=${QITS_DOMAIN:-wohlben.eu}
 qits_hosted="registry.qits.$qits_domain"
 qits_proxy="mirror.qits.$qits_domain"
-set -- /usr/bin/npm "$@"
+case "${0##*/}" in
+  npx) qits_real=/usr/bin/npx ;;
+  *) qits_real=/usr/bin/npm ;;
+esac
+set -- "$qits_real" "$@"
 if [ -n "${QITS_TOKEN:-}" ]; then
   set -- "npm_config_//$qits_hosted/:_authToken=$QITS_TOKEN" \
     "npm_config_//$qits_proxy/:_authToken=$QITS_TOKEN" \

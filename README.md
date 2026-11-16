@@ -102,13 +102,18 @@ introspected there and a short `qits-platform` JWT is forwarded on to the servic
   accepted and ignored). Loud on failure (exit 1 without a token), unlike the git helper, since a
   person or an agent calling it needs to know why.
 
-`npm` itself is a shim that points npm at the platform's registries and authenticates to them. The
-addresses are code plus `QITS_DOMAIN` (falling back to `wohlben.eu`), never injected URLs: the
-`@qits` scope at `https://registry.qits.<domain>/artifacts/npm/npm/` and everything else through the
-npmjs cache at `https://mirror.qits.<domain>/npm/npmjs/`. With `QITS_TOKEN` set it carries that as a
-per-host `_authToken` for both hosts; without it no auth key is added and the hosts refuse (see the
-shim's header). A lockfile written against those
-names resolves everywhere, so a plain `npm ci` works and nothing rewrites a lockfile.
+`npm` itself is a shim that points npm at the platform's registries and authenticates to them.
+`npx` is the same shim, installed a second time as a symlink, so an `npx` that has to fetch a
+package authenticates exactly the same way instead of falling through to the real, uncredentialed
+binary underneath (qits-2254). The addresses are code plus `QITS_DOMAIN` (falling back to
+`wohlben.eu`), never injected URLs: the `@qits` scope at
+`https://registry.qits.<domain>/artifacts/npm/npm/` and everything else through the npmjs cache at
+`https://mirror.qits.<domain>/npm/npmjs/`. With `QITS_TOKEN` set it carries that as a per-host
+`_authToken` for both hosts; without it no auth key is added and the hosts refuse (see the shim's
+header). A lockfile written against those names resolves everywhere, so a plain `npm ci` works and
+nothing rewrites a lockfile. A workspace never needs a token file for any of this: no `~/.npmrc`
+(`HOME` is shared across every agent container, qits-1918) and no `NPM_CONFIG_USERCONFIG` pointing
+somewhere else — `npm` and `npx` on `PATH` already carry the credential.
 
 Plus `/etc/profile.d/qits-workspace.sh` for every login shell: a passwd entry for the arbitrary uid,
 and the Maven settings that send the `qits-maven` repository to
