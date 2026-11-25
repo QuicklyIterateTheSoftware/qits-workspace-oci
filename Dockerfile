@@ -546,6 +546,20 @@ RUN chmod 0755 /usr/local/bin/qits \
     && /usr/local/bin/qits --help >/dev/null \
     && echo "qits=${QITS_CLI_VERSION}" > /etc/qits-cli-version
 
+# PLATFORM TRUST ANCHORS (epic qits-2524). node-browser-base ships qits-trust-layout and
+# qits-trust-init and has already pointed the system bundle at /etc/ssl/qits/ca-bundle.pem; it had no
+# JDK, so the Temurin `cacerts` above is still the JDK's own. Running the layout again, after every
+# apt and JDK layer, links $JAVA_HOME/lib/security/cacerts to /etc/ssl/qits/java-cacerts (and
+# re-links the system bundle if an apt layer rewrote it). The images built on this one start through
+# qits-trust-init, which fills both from QITS_TRUST_ANCHORS. The check fails the build when the base
+# predates the hook or the JDK store did not get linked.
+RUN test -x /usr/local/bin/qits-trust-layout \
+        || { echo "the base image has no qits-trust-layout: BROWSER_BASE predates qits-2524" >&2; exit 1; } \
+    && /usr/local/bin/qits-trust-layout \
+    && test "$(readlink /etc/ssl/certs/ca-certificates.crt)" = /etc/ssl/qits/ca-bundle.pem \
+    && test "$(readlink -f "$JAVA_HOME/lib/security/cacerts")" = /etc/ssl/qits/java-cacerts \
+    && keytool -list -cacerts -storepass changeit >/dev/null
+
 # Guard of last resort, run last so it sees every layer above: fail the build if anything on the
 # image landed owned by a uid or gid above 65535 — the jdtls extraction above is fixed with
 # `--no-same-owner`, but a future upstream tarball (or anything added later in this file) could
