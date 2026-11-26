@@ -72,6 +72,13 @@ release-request:
       curl -fsSL --retry 2 --retry-delay 2 -H "Authorization: Bearer $cli_token" \
         -o qits "$artifacts_url/artifacts/daemons/qits-platform-access-cli/$cli_version"
       [ -s qits ] || { echo "the qits CLI download is empty" >&2; exit 1; }
+      # THE CHECK FIRST, before the image is built for the push (qits-2657): the `check` target runs
+      # test-egress-hook.sh on top of the very stage that is pushed and exports nothing, so a hook
+      # that does not work — or a base or CLI pin it cannot work on — fails here.
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=. \
+        --opt build-arg:QITS_CLI_VERSION="$cli_version" \
+        --opt target=check
       ref="registry.qits.$qits_domain/$QITS_IMAGE_REPOSITORY/workspace-base:$QITS_CI_SHA"
       buildctl build --frontend dockerfile.v0 \
         --local context=. --local dockerfile=. \
@@ -109,6 +116,13 @@ release:
       curl -fsSL --retry 2 --retry-delay 2 -H "Authorization: Bearer $cli_token" \
         -o qits "$artifacts_url/artifacts/daemons/qits-platform-access-cli/$cli_version"
       [ -s qits ] || { echo "the qits CLI download is empty" >&2; exit 1; }
+      # THE CHECK FIRST, before the image is built for the push (qits-2657): the `check` target runs
+      # test-egress-hook.sh on top of the very stage that is pushed and exports nothing, so a hook
+      # that does not work — or a base or CLI pin it cannot work on — fails here.
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=. \
+        --opt build-arg:QITS_CLI_VERSION="$cli_version" \
+        --opt target=check
       ref="registry.qits.$qits_domain/$QITS_IMAGE_REPOSITORY/workspace-base:$QITS_VERSION"
       buildctl build --frontend dockerfile.v0 \
         --local context=. --local dockerfile=. \

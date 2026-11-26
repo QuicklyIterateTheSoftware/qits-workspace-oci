@@ -32,7 +32,9 @@
 # default can read it; the release recipes pass `--opt build-arg:QITS_DOMAIN`.
 ARG QITS_DOMAIN=wohlben.eu
 ARG BROWSER_BASE=registry.qits.${QITS_DOMAIN}/qits/build-images/node-browser-base:2026.1125.82627
-FROM ${BROWSER_BASE}
+# The stage is named only so the `check` target at the foot of this file can build on it; a build
+# that names no target gets the last stage, which is this one unchanged.
+FROM ${BROWSER_BASE} AS workspace-base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -560,6 +562,24 @@ RUN test -x /usr/local/bin/qits-trust-layout \
     && test "$(readlink -f "$JAVA_HOME/lib/security/cacerts")" = /etc/ssl/qits/java-cacerts \
     && keytool -list -cacerts -storepass changeit >/dev/null
 
+# THE EGRESS INIT HOOK (epic qits-2525, qits-2657). qits-trust-init, the ENTRYPOINT of every image
+# built on this one (workspace, agents and projects daemons), sources /etc/qits/init.d/*.sh just
+# before it execs the daemon (qits-build-images-oci, qits-2656). This hook starts
+# `qits egress forward --listen 127.0.0.1:3128` and points HTTPS_PROXY/HTTP_PROXY, NO_PROXY,
+# NODE_USE_ENV_PROXY and the JVM's proxy properties at it — but only when the CLI really has the
+# command and the listener accepts, since a proxy variable naming a dead listener cuts a container off
+# from everything outside. QITS_EGRESS=off is the creator's kill switch. qits-egress-hook.sh carries
+# the reasoning; test-egress-hook.sh, run by the `check` target below, proves it.
+#
+# THE LABEL IS A PROMISE: qits-system-runner hands the Claude login over to qits-egress only when every
+# container mounting the credential volume runs an image carrying it, because a container without the
+# hook would still talk to Anthropic directly with a credential that is about to become a placeholder.
+# That is why the `check` target also fails when the base's qits-trust-init sources no hooks or the
+# pinned CLI has no `egress forward`: the label must never ship on an image where the hook cannot work.
+COPY qits-egress-hook.sh /etc/qits/init.d/50-egress.sh
+RUN chmod 0644 /etc/qits/init.d/50-egress.sh && sh -n /etc/qits/init.d/50-egress.sh
+LABEL eu.wohlben.qits.egress-hook="1"
+
 # Guard of last resort, run last so it sees every layer above: fail the build if anything on the
 # image landed owned by a uid or gid above 65535 — the jdtls extraction above is fixed with
 # `--no-same-owner`, but a future upstream tarball (or anything added later in this file) could
@@ -574,3 +594,16 @@ RUN bad="$(find / -xdev \( -uid +65535 -o -gid +65535 \) -print 2>/dev/null | he
         echo "$bad" >&2; \
         exit 1; \
     fi
+
+# THE CHECK TARGET (qits-2657), built by both release recipes before the image itself and exported
+# nowhere: test-egress-hook.sh --installed runs the real qits-trust-init and /etc/qits/init.d with a
+# stub `qits` first on PATH, as `nobody` because a container's daemon need not be root. It also fails
+# when the base predates hook sourcing or the pinned CLI lacks `egress forward` (see the label above).
+FROM workspace-base AS check
+COPY test-egress-hook.sh /tmp/test-egress-hook.sh
+USER nobody
+RUN sh /tmp/test-egress-hook.sh --installed
+
+# THE IMAGE IS THE LAST STAGE: a build that names no target gets workspace-base itself, and BuildKit
+# never builds `check` for it.
+FROM workspace-base
