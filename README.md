@@ -133,7 +133,8 @@ ENTRYPOINT of the workspace, agents and projects daemon images built on this one
 hook's exports reach the daemon and everything it launches. This image installs one,
 `qits-egress-hook.sh`, and carries the label `eu.wohlben.qits.egress-hook="1"`.
 
-When `QITS_EGRESS` is not `off`, `QITS_DOMAIN` is set and `qits` is on PATH, the hook:
+When `QITS_EGRESS` is not `off`, `QITS_DOMAIN` is set, `qits` is on PATH and the platform trust
+anchor is present, the hook:
 
 1. Asks `qits egress forward --help` and requires the command's own `Usage: qits egress forward`
    line. The exit status alone does not tell: an older CLI answers an unknown subcommand followed
@@ -152,6 +153,18 @@ It exports nothing unless the proxy is really there, because a proxy variable th
 listener cuts the container off from everything outside it. `QITS_EGRESS=off` is the creator's kill
 switch.
 
+**The platform trust anchor is a precondition, not an afterthought.** `qits-trust-init` runs this
+hook *after* it has already rewritten `$QITS_TRUST_DIR/anchors.pem` (default `/etc/ssl/qits`,
+qits-build-images-oci's `trust/qits-trust-layout` and `trust/qits-trust-init`) from
+`QITS_TRUST_ANCHORS`, so by the time the hook runs that file already says whether this container's
+start carried the anchor. The hook checks it is present and holds at least one
+`-----BEGIN CERTIFICATE-----` block before doing anything else. A container started without
+`QITS_TRUST_ANCHORS` has a 0-byte `anchors.pem` — the hook logs
+`qits-egress-hook: no platform trust anchor, the proxy stays off` to stderr and exports nothing,
+starting no forwarder. Skipping this check was a live outage: qits-egress fronts some hosts with a
+platform-CA leaf, so a container with the proxy on but no anchor in its trust store failed those
+hosts' TLS with `SELF_SIGNED_CERT_IN_CHAIN` (qits-2525).
+
 The label is a promise. qits-system-runner hands the Claude login over to qits-egress only when every
 container that mounts the credential volume runs an image that carries it. So the image must never
 carry the label where the hook cannot work.
@@ -159,12 +172,18 @@ carry the label where the hook cannot work.
 **The check is `test-egress-hook.sh`.** It runs the real `qits-trust-init` with a stub `qits` first
 on PATH. It covers the happy path (the stub's argv, every exported value, `JDK_JAVA_OPTIONS`
 appended to, the forwarder outliving the init), an older CLI answered both ways, a listener that
-never comes up, `QITS_EGRESS=off`, and no `QITS_DOMAIN`. The Dockerfile's `check` target runs it
-with `--installed` as `nobody`, and both release recipes build that target before the image. In
-installed mode it also fails when the base's `qits-trust-init` sources no hooks (`BROWSER_BASE`
-older than node-browser-base 2026.1125.234117) or the pinned CLI has no `egress forward` (older than
-qits-platform-access-cli 2026.1126.33114). To run it without docker, against a checkout of
-qits-build-images-oci (needs bash, python3, setsid and a free port 3128):
+never comes up, a missing or empty `anchors.pem`, `QITS_EGRESS=off`, and no `QITS_DOMAIN`. The
+happy-path and CLI/listener cases mint one throwaway self-signed certificate with `openssl` and pass
+it as `QITS_TRUST_ANCHORS` so the real `qits-trust-init` populates `anchors.pem` exactly as a
+container start would; the missing/empty cases run with no anchor at all, or with the anchor that an
+earlier case's `QITS_TRUST_ANCHORS` populated now reset back to empty by `qits-trust-init`'s own
+`reset_public` — the same way a plain start without the variable always resets it. The Dockerfile's
+`check` target runs it with `--installed` as `nobody`, and both release recipes build that target
+before the image. In installed mode it also fails when the base's `qits-trust-init` sources no hooks
+(`BROWSER_BASE` older than node-browser-base 2026.1125.234117) or the pinned CLI has no
+`egress forward` (older than qits-platform-access-cli 2026.1126.33114). To run it without docker,
+against a checkout of qits-build-images-oci (needs bash, python3, setsid, openssl and a free port
+3128):
 
     sh test-egress-hook.sh ../../qits-build-images/qits-build-images-oci/trust/qits-trust-init
 

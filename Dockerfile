@@ -564,12 +564,16 @@ RUN test -x /usr/local/bin/qits-trust-layout \
 
 # THE EGRESS INIT HOOK (epic qits-2525, qits-2657). qits-trust-init, the ENTRYPOINT of every image
 # built on this one (workspace, agents and projects daemons), sources /etc/qits/init.d/*.sh just
-# before it execs the daemon (qits-build-images-oci, qits-2656). This hook starts
+# before it execs the daemon (qits-build-images-oci, qits-2656) — after it has already rewritten
+# /etc/ssl/qits/anchors.pem from QITS_TRUST_ANCHORS (the trust block above). This hook starts
 # `qits egress forward --listen 127.0.0.1:3128` and points HTTPS_PROXY/HTTP_PROXY, NO_PROXY,
-# NODE_USE_ENV_PROXY and the JVM's proxy properties at it — but only when the CLI really has the
-# command and the listener accepts, since a proxy variable naming a dead listener cuts a container off
-# from everything outside. QITS_EGRESS=off is the creator's kill switch. qits-egress-hook.sh carries
-# the reasoning; test-egress-hook.sh, run by the `check` target below, proves it.
+# NODE_USE_ENV_PROXY and the JVM's proxy properties at it — but only when the platform trust anchor
+# is actually in anchors.pem, the CLI really has the command, and the listener accepts, since a proxy
+# variable naming a dead listener cuts a container off from everything outside, and the proxy still
+# pointed somewhere live but with no platform CA to trust failed TLS to the hosts qits-egress fronts
+# with a platform-CA leaf (the live outage qits-2525 fixes). QITS_EGRESS=off is the creator's kill
+# switch. qits-egress-hook.sh carries the reasoning; test-egress-hook.sh, run by the `check` target
+# below, proves it.
 #
 # THE LABEL IS A PROMISE: qits-system-runner hands the Claude login over to qits-egress only when every
 # container mounting the credential volume runs an image carrying it, because a container without the
