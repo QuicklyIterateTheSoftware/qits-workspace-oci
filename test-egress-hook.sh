@@ -15,26 +15,41 @@
 #     and the forwarder outlives the init (it is still accepting after `env` exited);
 #   - old, unknown: nothing started, nothing exported, one stderr line;
 #   - dead: nothing exported after the ~3 s wait, one stderr line;
+#   - no platform trust anchor (qits-2525's live outage: a container started without
+#     QITS_TRUST_ANCHORS, so anchors.pem is missing or 0 bytes): nothing started, nothing exported,
+#     one stderr line, regardless of what the CLI would have answered;
 #   - QITS_EGRESS=off, and no QITS_DOMAIN: nothing started, nothing exported, nothing on stderr.
 #
 #   sh test-egress-hook.sh <qits-trust-init>   simulate: that qits-trust-init (a checkout of
 #                                              qits-build-images-oci's trust/qits-trust-init) and the
 #                                              hook from this directory, in a temp hook dir. No root,
-#                                              no docker; QITS_TRUST_DIR points at a path that does not
-#                                              exist, so the machine's own trust store is never touched.
+#                                              no docker; $trustdir starts out not existing, so a run
+#                                              with no QITS_TRUST_ANCHORS (every run below except the
+#                                              trust-anchor tests) never touches the machine's own
+#                                              trust store. The trust-anchor tests point
+#                                              QITS_TRUST_DIR at that same directory once it is
+#                                              seeded with an empty public-bundle.pem, so the real
+#                                              qits-trust-init can populate anchors.pem from
+#                                              QITS_TRUST_ANCHORS exactly as a container start does;
+#                                              it is still never the machine's own trust store.
 #   sh test-egress-hook.sh --installed          inside the built image (the Dockerfile's `check`
 #                                              target): /usr/local/bin/qits-trust-init and the real
-#                                              /etc/qits/init.d.
+#                                              /etc/qits/init.d, including its real
+#                                              /etc/ssl/qits/anchors.pem (mode 0666, so the check's
+#                                              `nobody` can write it like any other container start).
 #
-# Needs bash, python3 and setsid (each run is its own session, so the restart loop it leaves behind
-# is killed as one process group). The hook's listen address is fixed, so 127.0.0.1:3128 must be free.
+# Needs bash, python3, setsid (each run is its own session, so the restart loop it leaves behind is
+# killed as one process group) and openssl (to mint one throwaway self-signed anchor certificate;
+# qits-trust-init's own apply() needs it to validate, and both images this repository builds on
+# already carry it as ca-certificates' own dependency). The hook's listen address is fixed, so
+# 127.0.0.1:3128 must be free.
 set -u
 
 failures=0
 pass() { echo "ok    $1"; }
 fail() { echo "FAIL  $1" >&2; failures=$((failures + 1)); }
 
-for tool in bash python3 setsid; do
+for tool in bash python3 setsid openssl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "test-egress-hook: $tool is required" >&2; exit 2; }
 done
 listening() { bash -c ': </dev/tcp/127.0.0.1/3128' >/dev/null 2>&1; }
@@ -76,6 +91,12 @@ else
   hook=$hookdir/50-egress.sh
 fi
 if sh -n "$hook"; then pass "the hook parses as POSIX sh"; else fail "the hook does not parse"; fi
+
+# A throwaway self-signed anchor, minted once: the trust-anchor tests below pass it as
+# QITS_TRUST_ANCHORS so the REAL qits-trust-init populates anchors.pem exactly as a container start
+# does, and its own apply() validates the PEM with openssl x509 before it will do that.
+anchor_cert=$(openssl req -x509 -newkey ed25519 -days 1 -nodes -subj /CN=test-egress-hook -keyout /dev/null -out - 2>/dev/null) \
+  && [ -n "$anchor_cert" ] || { echo "test-egress-hook: could not mint a throwaway anchor certificate with openssl" >&2; exit 2; }
 
 # THE STUB. Its state directory is baked in, because the runs below start from a cleaned environment.
 mkdir -p "$tmp/bin"
@@ -134,8 +155,32 @@ proxy=http://127.0.0.1:3128
 no_proxy_list="localhost,127.0.0.1,::1,.qits.$domain,host.docker.internal,100.96.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10"
 jvm="-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=3128 -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=3128 -Dhttp.nonProxyHosts=localhost|127.*|10.*|172.*|192.168.*|100.*|*.qits.$domain|host.docker.internal"
 
-# 1. The happy path: a CLI with `egress forward` that listens.
+# 0. No platform trust anchor (qits-2525's live outage: a container started without
+# QITS_TRUST_ANCHORS). Simulate mode: $trustdir does not exist yet, so qits-trust-init's dir never
+# gets so much as a reset_public() pass over it. --installed mode: the real anchors.pem, touched
+# empty at build time and reset empty by qits-trust-init's own reset_public on every start that
+# carries no QITS_TRUST_ANCHORS — true of every start below, this one included. Either way the
+# hook must not even ask the CLI anything.
 start listen QITS_DOMAIN="$domain"
+if [ -z "$(exported)" ]; then pass "no trust anchor: nothing exported"; else fail "no trust anchor: exported $(exported | tr '\n' ' ')"; fi
+if [ -s "$tmp/argv" ]; then fail "no trust anchor: qits was called ($(tr '\n' ';' <"$tmp/argv"))"; else pass "no trust anchor: qits was never called"; fi
+if [ "$(lines "$tmp/err")" = 1 ] && grep -qxF 'qits-egress-hook: no platform trust anchor, the proxy stays off' "$tmp/err"; then
+  pass "no trust anchor: one stderr line"
+else
+  fail "no trust anchor: stderr '$(cat "$tmp/err")'"
+fi
+
+# From here on $trustdir (simulate mode) carries a real platform anchor for tests 1-4, through
+# QITS_TRUST_ANCHORS exactly as a container start writes it — seeded with an empty public-bundle.pem
+# so the real qits-trust-init's apply() has the one file it insists on before it will write anything.
+# --installed mode needs no seed: /etc/ssl/qits already carries that file.
+if [ -n "$trustdir" ]; then
+  mkdir -p "$trustdir"
+  : >"$trustdir/public-bundle.pem"
+fi
+
+# 1. The happy path: a CLI with `egress forward` that listens, with a real platform trust anchor.
+start listen QITS_DOMAIN="$domain" QITS_TRUST_ANCHORS="$anchor_cert"
 if has_line 'egress forward --listen 127.0.0.1:3128' "$tmp/argv"; then
   pass "listen: the stub was started with 'egress forward --listen 127.0.0.1:3128'"
 else
@@ -149,10 +194,10 @@ for pair in "QITS_EGRESS_PROXY=127.0.0.1:3128" "HTTPS_PROXY=$proxy" "https_proxy
 done
 if [ "$(lines "$tmp/err")" = 0 ]; then pass "listen: the init is quiet"; else fail "listen: stderr '$(cat "$tmp/err")'"; fi
 if [ "$(cat "$tmp/alive")" = yes ]; then pass "listen: the forwarder outlives the init"; else fail "listen: nothing accepts on 127.0.0.1:3128 once the init exec'd"; fi
-if grep -qE '^(_h|_p|_n|_up|_i)=' "$tmp/out"; then fail "listen: the hook leaked a helper variable"; else pass "listen: no helper variable leaks"; fi
+if grep -qE '^(_h|_p|_n|_up|_i|_td)=' "$tmp/out"; then fail "listen: the hook leaked a helper variable"; else pass "listen: no helper variable leaks"; fi
 
 # 2. JDK_JAVA_OPTIONS a creator already set is appended to, not replaced.
-start listen QITS_DOMAIN="$domain" JDK_JAVA_OPTIONS=-Dcreator=1
+start listen QITS_DOMAIN="$domain" QITS_TRUST_ANCHORS="$anchor_cert" JDK_JAVA_OPTIONS=-Dcreator=1
 if has_line "JDK_JAVA_OPTIONS=-Dcreator=1 $jvm" "$tmp/out"; then
   pass "listen: JDK_JAVA_OPTIONS is appended to"
 else
@@ -160,28 +205,42 @@ else
 fi
 
 # 3. An older CLI, without `egress forward`, both ways it can answer: the guard keeps every proxy
-# variable out.
+# variable out. The anchor is present throughout, so this isolates the CLI guard from the anchor one.
 for mode in old unknown; do
-  start "$mode" QITS_DOMAIN="$domain"
+  start "$mode" QITS_DOMAIN="$domain" QITS_TRUST_ANCHORS="$anchor_cert"
   if [ -z "$(exported)" ]; then pass "$mode CLI: nothing exported"; else fail "$mode CLI: exported $(exported | tr '\n' ' ')"; fi
   if grep -q -- '--listen' "$tmp/argv"; then fail "$mode CLI: the forwarder was started anyway"; else pass "$mode CLI: no forwarder started"; fi
   if [ "$(lines "$tmp/err")" = 1 ] && grep -q 'egress forward' "$tmp/err"; then pass "$mode CLI: one stderr line"; else fail "$mode CLI: stderr '$(cat "$tmp/err")'"; fi
 done
 
-# 4. A forwarder that never listens: after the wait, one line and nothing exported.
-start dead QITS_DOMAIN="$domain"
+# 4. A forwarder that never listens: after the wait, one line and nothing exported. The anchor is
+# present, isolating the listener guard from the anchor one.
+start dead QITS_DOMAIN="$domain" QITS_TRUST_ANCHORS="$anchor_cert"
 if grep -q -- 'egress forward --listen 127.0.0.1:3128' "$tmp/argv"; then pass "dead listener: the forwarder was started"; else fail "dead listener: the forwarder was never started"; fi
 if [ -z "$(exported)" ]; then pass "dead listener: nothing exported"; else fail "dead listener: exported $(exported | tr '\n' ' ')"; fi
 if [ "$(lines "$tmp/err")" = 1 ] && grep -q '127.0.0.1:3128' "$tmp/err"; then pass "dead listener: one stderr line"; else fail "dead listener: stderr '$(cat "$tmp/err")'"; fi
 
-# 5. The kill switch, and a container with no QITS_DOMAIN: nothing at all, silently.
-start listen QITS_DOMAIN="$domain" QITS_EGRESS=off
+# 5. The anchor from tests 1-4, now present but empty (0 bytes): exactly the live outage's shape.
+# No QITS_TRUST_ANCHORS this time, so qits-trust-init's own reset_public produces it unaided, the
+# same way a plain container start without the variable does.
+start listen QITS_DOMAIN="$domain"
+if [ -z "$(exported)" ]; then pass "empty trust anchor: nothing exported"; else fail "empty trust anchor: exported $(exported | tr '\n' ' ')"; fi
+if [ -s "$tmp/argv" ]; then fail "empty trust anchor: qits was called ($(tr '\n' ';' <"$tmp/argv"))"; else pass "empty trust anchor: qits was never called"; fi
+if [ "$(lines "$tmp/err")" = 1 ] && grep -qxF 'qits-egress-hook: no platform trust anchor, the proxy stays off' "$tmp/err"; then
+  pass "empty trust anchor: one stderr line"
+else
+  fail "empty trust anchor: stderr '$(cat "$tmp/err")'"
+fi
+
+# 6. The kill switch, and a container with no QITS_DOMAIN: nothing at all, silently — before the
+# hook even looks at the anchor, so a real one from tests 1-4 being present changes nothing.
+start listen QITS_DOMAIN="$domain" QITS_TRUST_ANCHORS="$anchor_cert" QITS_EGRESS=off
 if [ -z "$(exported)" ] && ! [ -s "$tmp/argv" ] && [ "$(lines "$tmp/err")" = 0 ]; then
   pass "QITS_EGRESS=off: nothing started, nothing exported, quiet"
 else
   fail "QITS_EGRESS=off: exported '$(exported | tr '\n' ' ')', argv '$(tr '\n' ';' <"$tmp/argv")', stderr '$(cat "$tmp/err")'"
 fi
-start listen
+start listen QITS_TRUST_ANCHORS="$anchor_cert"
 if [ -z "$(exported)" ] && ! [ -s "$tmp/argv" ] && [ "$(lines "$tmp/err")" = 0 ]; then
   pass "no QITS_DOMAIN: nothing started, nothing exported, quiet"
 else
