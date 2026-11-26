@@ -125,6 +125,49 @@ Maven stays on stock Maven Central. A caller that already passes its own `-s`/`-
 either way. The profile derives the two mirror URLs from `QITS_DOMAIN` and exports them for the
 settings file to read; nothing injects them.
 
+### The egress init hook — `/etc/qits/init.d/50-egress.sh`
+
+Epic qits-2525: agents reach outside resources only through qits-egress. `qits-trust-init`, the
+ENTRYPOINT of the workspace, agents and projects daemon images built on this one, sources every
+`/etc/qits/init.d/*.sh` just before it execs the daemon (qits-build-images-oci, qits-2656), so a
+hook's exports reach the daemon and everything it launches. This image installs one,
+`qits-egress-hook.sh`, and carries the label `eu.wohlben.qits.egress-hook="1"`.
+
+When `QITS_EGRESS` is not `off`, `QITS_DOMAIN` is set and `qits` is on PATH, the hook:
+
+1. Asks `qits egress forward --help` and requires the command's own `Usage: qits egress forward`
+   line. The exit status alone does not tell: an older CLI answers an unknown subcommand followed
+   by `--help` with its top-level usage and exit 0. Without the command it logs one stderr line
+   and stops.
+2. Starts `qits egress forward --listen 127.0.0.1:3128` in a restart loop (2 s between runs),
+   logging to `/tmp/qits-egress-forward.log`, with every descriptor of the init detached.
+3. Waits up to 3 s for 127.0.0.1:3128 to accept (bash's `/dev/tcp`). If it never does, it logs
+   one stderr line and exports nothing. The loop keeps trying in the background.
+4. Exports `QITS_EGRESS_PROXY=127.0.0.1:3128`, `HTTPS_PROXY`/`https_proxy`/`HTTP_PROXY`/`http_proxy`
+   `=http://127.0.0.1:3128`, `NO_PROXY`/`no_proxy` (loopback, `.qits.<domain>`,
+   `host.docker.internal`, `100.96.0.1` and the private ranges), `NODE_USE_ENV_PROXY=1`, and
+   appends the JVM's proxy properties to `JDK_JAVA_OPTIONS`.
+
+It exports nothing unless the proxy is really there, because a proxy variable that names a dead
+listener cuts the container off from everything outside it. `QITS_EGRESS=off` is the creator's kill
+switch.
+
+The label is a promise. qits-system-runner hands the Claude login over to qits-egress only when every
+container that mounts the credential volume runs an image that carries it. So the image must never
+carry the label where the hook cannot work.
+
+**The check is `test-egress-hook.sh`.** It runs the real `qits-trust-init` with a stub `qits` first
+on PATH. It covers the happy path (the stub's argv, every exported value, `JDK_JAVA_OPTIONS`
+appended to, the forwarder outliving the init), an older CLI answered both ways, a listener that
+never comes up, `QITS_EGRESS=off`, and no `QITS_DOMAIN`. The Dockerfile's `check` target runs it
+with `--installed` as `nobody`, and both release recipes build that target before the image. In
+installed mode it also fails when the base's `qits-trust-init` sources no hooks (`BROWSER_BASE`
+older than node-browser-base 2026.1125.234117) or the pinned CLI has no `egress forward` (older than
+qits-platform-access-cli 2026.1126.33114). To run it without docker, against a checkout of
+qits-build-images-oci (needs bash, python3, setsid and a free port 3128):
+
+    sh test-egress-hook.sh ../../qits-build-images/qits-build-images-oci/trust/qits-trust-init
+
 ## Building by hand
 
 **Fetch the `qits` binary into the context first**, or the `COPY` fails: the Dockerfile expects the
@@ -164,3 +207,6 @@ pointed at it by a name it did not have.
 The `Dockerfile` here is that stage copied verbatim, comments and pinned versions included. The one
 change is dropping ` AS workspace` from the `FROM`, since the stage is now the whole image. It
 therefore produces the same image the platform runs today.
+
+Since qits-2657 the stage is named again, `workspace-base`, only so the `check` target can build on
+it. A build that names no target still gets that stage unchanged.
